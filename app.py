@@ -121,9 +121,9 @@ if page == "Price Dashboard":
                     
                     param_value = st.slider(
                         f"{param} ({details.get('unit', '')})", 
-                        min_value=min_value,
-                        max_value=max_value,
-                        value=default_value,
+                        min_value=float(min_value),
+                        max_value=float(max_value),
+                        value=float(default_value),
                         step=details.get('step', 0.1)
                     )
                     
@@ -296,9 +296,9 @@ elif page == "Quality Analysis":
                     
                     param_value = st.slider(
                         f"{param} ({details.get('unit', '')})", 
-                        min_value=min_value,
-                        max_value=max_value,
-                        value=default_value,
+                        min_value=float(min_value),
+                        max_value=float(max_value),
+                        value=float(default_value),
                         step=details.get('step', 0.1),
                         key=f"quality_{param}"
                     )
@@ -1727,9 +1727,9 @@ elif page == "Data Submission":
                         
                         param_value = st.slider(
                             f"{param} ({details.get('unit', '')})", 
-                            min_value=min_value,
-                            max_value=max_value,
-                            value=default_value,
+                            min_value=float(min_value),
+                            max_value=float(max_value),
+                            value=float(default_value),
                             step=details.get('step', 0.1),
                             key=f"submit_quality_{param}"
                         )

@@ -550,10 +550,10 @@ def clean_data_pipeline(commodity=None, days=30):
         results["validation_issues"] = validation_issues
         
         # Add summary
-        results["summary"] = f"Cleaned {days} days of data, detected {results['anomalies_detected']} anomalies, " \
-                             f"fixed {results['missing_data_fixed']} missing data points, " \
-                             f"applied rules to {results['rules_applied']} points, " \
-                             f"found {results['validation_issues']} validation issues."
+        results["summary"] = f"Cleaned {days} days of data, detected {int(results['anomalies_detected'])} anomalies, " \
+                             f"fixed {int(results['missing_data_fixed'])} missing data points, " \
+                             f"applied rules to {int(results['rules_applied'])} points, " \
+                             f"found {int(results['validation_issues'])} validation issues."
         
         logger.info(f"Data cleaning pipeline completed: {results['summary']}")
         

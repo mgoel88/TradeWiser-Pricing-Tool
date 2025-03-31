@@ -8,6 +8,7 @@ import json
 import hashlib
 import pandas as pd
 from datetime import datetime, date, timedelta
+from sqlalchemy.sql import func
 
 from database_sql import (
     Session, UserSubmission, Commodity, Region, PricePoint, DataSource,
@@ -291,9 +292,9 @@ def get_user_submission_status(user_id_or_email):
             "rejected_submissions": rejected_count,
             "pending_submissions": pending_count,
             "verification_rate": verified_count / len(submissions) if len(submissions) > 0 else 0,
-            "total_reward_points": rewards.get("total_points", 0),
+            "total_reward_points": rewards.get("total_points", 0) if rewards else 0,
             "recent_submissions": submissions_data[:10],  # Show only the 10 most recent
-            "commodity_breakdown": rewards.get("commodity_breakdown", {})
+            "commodity_breakdown": rewards.get("commodity_breakdown", {}) if rewards else {}
         }
         
     except Exception as e:
