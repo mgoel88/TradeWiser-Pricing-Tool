@@ -1,0 +1,23 @@
+889-                            "End Date",
+890-                            datetime.now()
+891-                        )
+892-                    
+893-                    # Calculate days difference
+894:                    days_diff = (end_date - start_date.date()).days
+895-                    
+896-                    if days_diff > 0:
+897-                        # Get price data
+898-                        price_data = get_price_history(
+899-                            selected_commodity, 
+--
+1134-                            datetime.now(),
+1135-                            key="spread_end"
+1136-                        )
+1137-                    
+1138-                    # Calculate days difference
+1139:                    days_diff = (end_date - start_date.date()).days
+1140-                    
+1141-                    if days_diff > 0:
+1142-                        # Get price data for both regions
+1143-                        prices1 = get_price_history(
+1144-                            selected_commodity, 

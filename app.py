@@ -891,7 +891,7 @@ elif page == "Data Explorer":
                         )
                     
                     # Calculate days difference
-                    days_diff = (end_date - start_date.date()).days
+                    days_diff = (end_date - start_date).days
                     
                     if days_diff > 0:
                         # Get price data
@@ -1136,7 +1136,7 @@ elif page == "Data Explorer":
                         )
                     
                     # Calculate days difference
-                    days_diff = (end_date - start_date.date()).days
+                    days_diff = (end_date - start_date).days
                     
                     if days_diff > 0:
                         # Get price data for both regions

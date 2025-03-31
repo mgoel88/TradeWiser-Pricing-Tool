@@ -1,0 +1,305 @@
+{
+  "Wheat": {
+    "quality_parameters": {
+      "moisture": {
+        "min": 8.0,
+        "max": 16.0,
+        "standard_value": 12.0,
+        "unit": "%",
+        "step": 0.1,
+        "impact_type": "threshold"
+      },
+      "foreign_matter": {
+        "min": 0.0,
+        "max": 5.0,
+        "standard_value": 1.0,
+        "unit": "%",
+        "step": 0.1,
+        "impact_type": "linear"
+      },
+      "damaged_grains": {
+        "min": 0.0,
+        "max": 10.0,
+        "standard_value": 2.0,
+        "unit": "%",
+        "step": 0.1,
+        "impact_type": "linear"
+      },
+      "shriveled_grains": {
+        "min": 0.0,
+        "max": 8.0,
+        "standard_value": 3.0,
+        "unit": "%",
+        "step": 0.1,
+        "impact_type": "linear"
+      }
+    },
+    "price_range": {
+      "min": 2200,
+      "max": 3500
+    },
+    "regions": [
+      "North India",
+      "Central India",
+      "West India"
+    ],
+    "quality_impact": {
+      "moisture": {
+        "factor": -50.0,
+        "premium_factor": -40.0,
+        "discount_factor": -60.0
+      },
+      "foreign_matter": {
+        "factor": -100.0
+      },
+      "damaged_grains": {
+        "factor": -80.0
+      },
+      "shriveled_grains": {
+        "factor": -40.0
+      }
+    }
+  },
+  "Rice": {
+    "quality_parameters": {
+      "moisture": {
+        "min": 10.0,
+        "max": 18.0,
+        "standard_value": 14.0,
+        "unit": "%",
+        "step": 0.1,
+        "impact_type": "threshold"
+      },
+      "broken_grains": {
+        "min": 0.0,
+        "max": 15.0,
+        "standard_value": 5.0,
+        "unit": "%",
+        "step": 0.1,
+        "impact_type": "linear"
+      },
+      "foreign_matter": {
+        "min": 0.0,
+        "max": 3.0,
+        "standard_value": 0.5,
+        "unit": "%",
+        "step": 0.1,
+        "impact_type": "linear"
+      },
+      "discolored_grains": {
+        "min": 0.0,
+        "max": 5.0,
+        "standard_value": 1.0,
+        "unit": "%",
+        "step": 0.1,
+        "impact_type": "linear"
+      }
+    },
+    "price_range": {
+      "min": 2800,
+      "max": 4200
+    },
+    "regions": [
+      "North India",
+      "East India",
+      "South India"
+    ],
+    "quality_impact": {
+      "moisture": {
+        "factor": -40.0,
+        "premium_factor": -30.0,
+        "discount_factor": -50.0
+      },
+      "broken_grains": {
+        "factor": -70.0
+      },
+      "foreign_matter": {
+        "factor": -120.0
+      },
+      "discolored_grains": {
+        "factor": -90.0
+      }
+    }
+  },
+  "Tur Dal": {
+    "quality_parameters": {
+      "moisture": {
+        "min": 8.0,
+        "max": 14.0,
+        "standard_value": 10.0,
+        "unit": "%",
+        "step": 0.1,
+        "impact_type": "threshold"
+      },
+      "foreign_matter": {
+        "min": 0.0,
+        "max": 3.0,
+        "standard_value": 1.0,
+        "unit": "%",
+        "step": 0.1,
+        "impact_type": "linear"
+      },
+      "damaged_grains": {
+        "min": 0.0,
+        "max": 5.0,
+        "standard_value": 2.0,
+        "unit": "%",
+        "step": 0.1,
+        "impact_type": "linear"
+      },
+      "weevilled_grains": {
+        "min": 0.0,
+        "max": 3.0,
+        "standard_value": 1.0,
+        "unit": "%",
+        "step": 0.1,
+        "impact_type": "linear"
+      }
+    },
+    "price_range": {
+      "min": 6000,
+      "max": 8500
+    },
+    "regions": [
+      "South India",
+      "West India",
+      "Central India"
+    ],
+    "quality_impact": {
+      "moisture": {
+        "factor": -60.0,
+        "premium_factor": -50.0,
+        "discount_factor": -70.0
+      },
+      "foreign_matter": {
+        "factor": -150.0
+      },
+      "damaged_grains": {
+        "factor": -120.0
+      },
+      "weevilled_grains": {
+        "factor": -200.0
+      }
+    }
+  },
+  "Soyabean": {
+    "quality_parameters": {
+      "moisture": {
+        "min": 8.0,
+        "max": 14.0,
+        "standard_value": 12.0,
+        "unit": "%",
+        "step": 0.1,
+        "impact_type": "threshold"
+      },
+      "foreign_matter": {
+        "min": 0.0,
+        "max": 4.0,
+        "standard_value": 1.0,
+        "unit": "%",
+        "step": 0.1,
+        "impact_type": "linear"
+      },
+      "oil_content": {
+        "min": 15.0,
+        "max": 22.0,
+        "standard_value": 18.0,
+        "unit": "%",
+        "step": 0.1,
+        "impact_type": "linear"
+      },
+      "damaged_seeds": {
+        "min": 0.0,
+        "max": 5.0,
+        "standard_value": 2.0,
+        "unit": "%",
+        "step": 0.1,
+        "impact_type": "linear"
+      }
+    },
+    "price_range": {
+      "min": 3500,
+      "max": 5000
+    },
+    "regions": [
+      "Central India",
+      "West India"
+    ],
+    "quality_impact": {
+      "moisture": {
+        "factor": -45.0,
+        "premium_factor": -35.0,
+        "discount_factor": -55.0
+      },
+      "foreign_matter": {
+        "factor": -110.0
+      },
+      "oil_content": {
+        "factor": 80.0
+      },
+      "damaged_seeds": {
+        "factor": -90.0
+      }
+    }
+  },
+  "Mustard": {
+    "quality_parameters": {
+      "moisture": {
+        "min": 6.0,
+        "max": 12.0,
+        "standard_value": 8.0,
+        "unit": "%",
+        "step": 0.1,
+        "impact_type": "threshold"
+      },
+      "foreign_matter": {
+        "min": 0.0,
+        "max": 4.0,
+        "standard_value": 2.0,
+        "unit": "%",
+        "step": 0.1,
+        "impact_type": "linear"
+      },
+      "oil_content": {
+        "min": 35.0,
+        "max": 45.0,
+        "standard_value": 40.0,
+        "unit": "%",
+        "step": 0.1,
+        "impact_type": "linear"
+      },
+      "damaged_seeds": {
+        "min": 0.0,
+        "max": 4.0,
+        "standard_value": 1.5,
+        "unit": "%",
+        "step": 0.1,
+        "impact_type": "linear"
+      }
+    },
+    "price_range": {
+      "min": 4500,
+      "max": 6500
+    },
+    "regions": [
+      "North India",
+      "East India"
+    ],
+    "quality_impact": {
+      "moisture": {
+        "factor": -50.0,
+        "premium_factor": -40.0,
+        "discount_factor": -60.0
+      },
+      "foreign_matter": {
+        "factor": -100.0
+      },
+      "oil_content": {
+        "factor": 120.0
+      },
+      "damaged_seeds": {
+        "factor": -85.0
+      }
+    }
+  }
+}
