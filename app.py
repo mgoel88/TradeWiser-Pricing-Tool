@@ -3,15 +3,47 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
+from datetime import datetime, date, timedelta
+import os
+import json
+from PIL import Image
 
+# Import modules from our application
 from data_crawler import fetch_latest_agmarknet_data, fetch_commodity_list
 from data_processor import process_data, standardize_commodity
 from pricing_engine import calculate_price, get_price_history
 from visualization import create_price_trend_chart, create_quality_impact_chart
-from database import get_commodity_data, save_user_input, get_regions
 from quality_analyzer import analyze_quality_from_image, analyze_report
 from models import predict_price_trend
+
+# Import our new SQL database module
+from database_sql import (
+    get_commodity_data, get_regions, get_all_commodities,
+    save_user_input, query_similar_qualities, get_price_recommendation,
+    get_price_history as get_sql_price_history,
+    calculate_wizx_index, get_wizx_indices,
+    initialize_database
+)
+
+# Import data cleaning module
+from data_cleaning import (
+    detect_price_anomalies, fix_missing_data,
+    validate_price_curve, clean_data_pipeline
+)
+
+# Import WIZX index module
+from wizx_index import (
+    calculate_all_indices, calculate_composite_index,
+    get_sector_indices, historical_index_performance,
+    compare_indices, export_indices
+)
+
+# Import user submissions module
+from user_submissions import (
+    submit_price_data, get_pending_submissions,
+    get_user_submission_status, auto_verify_submission,
+    get_leaderboard
+)
 
 # Set page configuration
 st.set_page_config(
@@ -34,10 +66,16 @@ if 'calculated_price' not in st.session_state:
 st.title("AgriPrice Engine")
 st.markdown("### Agricultural Commodity Pricing & Analysis Platform")
 
+# Initialize database if this is the first run
+try:
+    initialize_database()
+except Exception as e:
+    st.error(f"Error initializing database: {e}")
+
 # Sidebar for navigation
 st.sidebar.title("Navigation")
 page = st.sidebar.radio("Select a page:", 
-    ["Price Dashboard", "Quality Analysis", "Market Trends", "Data Explorer"])
+    ["Price Dashboard", "Quality Analysis", "Market Trends", "WIZX Index", "Data Submission", "Data Explorer", "Data Cleaning"])
 
 # Main content based on selected page
 if page == "Price Dashboard":
@@ -844,6 +882,1431 @@ elif page == "Market Trends":
                         st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.info("No data available for the selected commodities.")
+
+elif page == "WIZX Index":
+    st.header("WIZX Agricultural Commodity Index")
+    
+    st.markdown("""
+    Welcome to the WIZX Index - a standardized commodity price index for agricultural products,
+    similar to financial indices like SENSEX and NYMEX. The WIZX Index provides a reliable benchmark
+    for tracking agricultural commodity prices across different regions and qualities.
+    """)
+    
+    # Tabs for different WIZX index views
+    tab1, tab2, tab3, tab4 = st.tabs(["Index Dashboard", "Commodity Indices", "Sector Indices", "Analysis"])
+    
+    with tab1:
+        st.subheader("WIZX Composite Index Dashboard")
+        
+        # Time period selection
+        time_period = st.radio(
+            "Select Time Period",
+            ["1 Month", "3 Months", "6 Months", "1 Year"],
+            horizontal=True,
+            key="wizx_time_period"
+        )
+        
+        days_map = {
+            "1 Month": 30,
+            "3 Months": 90,
+            "6 Months": 180,
+            "1 Year": 365
+        }
+        
+        days = days_map[time_period]
+        
+        # Calculate composite index
+        with st.spinner("Calculating WIZX Composite Index..."):
+            try:
+                # Calculate all indices first
+                calculate_all_indices()
+                
+                # Calculate composite index
+                composite_index = calculate_composite_index(date_val=date.today())
+                
+                if composite_index.get("success", False):
+                    # Get historical performance
+                    historical_data = historical_index_performance("WIZX-Composite", days)
+                    
+                    # Display current value
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.metric(
+                            "WIZX-Composite",
+                            f"{composite_index['value']:.2f}",
+                            f"{composite_index['change_percentage']:.2f}%"
+                        )
+                    
+                    with col2:
+                        # Calculate monthly change
+                        if historical_data.get("success", False) and "periodic_returns" in historical_data:
+                            monthly_return = historical_data["periodic_returns"]["last_month"]
+                            if monthly_return is not None:
+                                st.metric(
+                                    "Monthly Change",
+                                    f"{monthly_return:.2f}%",
+                                    delta=None
+                                )
+                    
+                    with col3:
+                        # Display volatility
+                        if historical_data.get("success", False) and "volatility" in historical_data:
+                            volatility = historical_data["volatility"]
+                            if volatility is not None:
+                                st.metric(
+                                    "Volatility (Std Dev)",
+                                    f"{volatility:.2f}",
+                                    delta=None
+                                )
+                    
+                    # Display historical chart
+                    if historical_data.get("success", False) and "values" in historical_data:
+                        values = historical_data["values"]
+                        
+                        # Create dataframe for chart
+                        df = pd.DataFrame(values)
+                        
+                        # Create line chart
+                        fig = px.line(
+                            df,
+                            x="date",
+                            y="value",
+                            title="WIZX Composite Index - Historical Trend",
+                            labels={"date": "Date", "value": "Index Value"}
+                        )
+                        
+                        # Add reference line for initial value
+                        if len(df) > 0:
+                            fig.add_hline(
+                                y=1000,
+                                line_dash="dash",
+                                line_color="red",
+                                annotation_text="Base Value (1000)"
+                            )
+                        
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Calculate and display component contributions
+                        if "components" in composite_index:
+                            components = composite_index["components"]
+                            
+                            st.subheader("Component Contributions")
+                            
+                            # Create dataframe
+                            component_df = pd.DataFrame([
+                                {
+                                    "Commodity": k,
+                                    "Index Value": v["index_value"],
+                                    "Weight": v["weight"],
+                                    "Weighted Value": v["weighted_value"]
+                                }
+                                for k, v in components.items()
+                            ])
+                            
+                            # Sort by weighted value
+                            component_df = component_df.sort_values("Weighted Value", ascending=False)
+                            
+                            # Display table
+                            st.dataframe(component_df, use_container_width=True)
+                            
+                            # Create bar chart of component contributions
+                            fig = px.bar(
+                                component_df,
+                                x="Commodity",
+                                y="Weighted Value",
+                                title="Component Contributions to WIZX Composite Index",
+                                color="Weighted Value",
+                                labels={"Weighted Value": "Contribution to Index"}
+                            )
+                            
+                            st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.error(f"Failed to calculate composite index: {composite_index.get('message', 'Unknown error')}")
+            except Exception as e:
+                st.error(f"Error calculating WIZX index: {e}")
+    
+    with tab2:
+        st.subheader("Individual Commodity Indices")
+        
+        # Commodity selection
+        commodities = get_all_commodities()
+        selected_commodities = st.multiselect(
+            "Select Commodities to Compare",
+            commodities,
+            default=[commodities[0]] if commodities else None,
+            key="wizx_commodity_select"
+        )
+        
+        if selected_commodities:
+            # Time period selection
+            time_period = st.radio(
+                "Select Time Period",
+                ["1 Month", "3 Months", "6 Months", "1 Year"],
+                horizontal=True,
+                key="commodity_time_period"
+            )
+            
+            days_map = {
+                "1 Month": 30,
+                "3 Months": 90,
+                "6 Months": 180,
+                "1 Year": 365
+            }
+            
+            days = days_map[time_period]
+            
+            # Display indices
+            with st.spinner("Fetching commodity indices..."):
+                try:
+                    # Get indices for selected time period
+                    end_date = date.today()
+                    start_date = end_date - timedelta(days=days)
+                    
+                    indices = get_wizx_indices(start_date=start_date, end_date=end_date)
+                    
+                    if indices and any(c in indices for c in selected_commodities):
+                        # Create metrics for current values
+                        columns = st.columns(min(len(selected_commodities), 4))
+                        
+                        for i, commodity in enumerate(selected_commodities):
+                            if commodity in indices:
+                                commodity_indices = indices[commodity]
+                                
+                                if commodity_indices:
+                                    latest_index = commodity_indices[-1]
+                                    
+                                    with columns[i % 4]:
+                                        delta = latest_index["change_percentage"] if "change_percentage" in latest_index else None
+                                        
+                                        st.metric(
+                                            commodity,
+                                            f"{latest_index['index_value']:.2f}",
+                                            f"{delta:.2f}%" if delta is not None else None
+                                        )
+                        
+                        # Create chart with all selected commodities
+                        st.subheader("Commodity Index Comparison")
+                        
+                        # Prepare data for chart
+                        chart_data = []
+                        
+                        for commodity in selected_commodities:
+                            if commodity in indices:
+                                for idx in indices[commodity]:
+                                    chart_data.append({
+                                        "Commodity": commodity,
+                                        "Date": idx["date"],
+                                        "Index Value": idx["index_value"]
+                                    })
+                        
+                        if chart_data:
+                            chart_df = pd.DataFrame(chart_data)
+                            
+                            # Create line chart
+                            fig = px.line(
+                                chart_df,
+                                x="Date",
+                                y="Index Value",
+                                color="Commodity",
+                                title="WIZX Commodity Indices Comparison",
+                                labels={"Date": "Date", "Index Value": "Index Value"}
+                            )
+                            
+                            # Add reference line
+                            fig.add_hline(
+                                y=1000,
+                                line_dash="dash",
+                                line_color="gray",
+                                annotation_text="Base Value (1000)"
+                            )
+                            
+                            st.plotly_chart(fig, use_container_width=True)
+                            
+                            # Display correlation matrix
+                            comparison = compare_indices(selected_commodities, days)
+                            
+                            if comparison and "correlation_matrix" in comparison:
+                                st.subheader("Correlation Matrix")
+                                
+                                # Convert correlation dict to dataframe
+                                corr_matrix = comparison["correlation_matrix"]
+                                
+                                if corr_matrix:
+                                    corr_df = pd.DataFrame(corr_matrix)
+                                    
+                                    # Create heatmap
+                                    fig = px.imshow(
+                                        corr_df,
+                                        text_auto=True,
+                                        color_continuous_scale="RdBu_r",
+                                        labels=dict(x="Commodity", y="Commodity", color="Correlation"),
+                                        title="Price Correlation Between Commodities"
+                                    )
+                                    
+                                    st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.info("No index data available for the selected commodities and time period.")
+                except Exception as e:
+                    st.error(f"Error fetching commodity indices: {e}")
+        else:
+            st.info("Please select at least one commodity to view indices.")
+    
+    with tab3:
+        st.subheader("Sector Indices")
+        
+        # Get sector indices
+        with st.spinner("Calculating sector indices..."):
+            try:
+                # Define sectors
+                sector_definitions = {
+                    "WIZX-Cereals": ["Wheat", "Rice", "Maize"],
+                    "WIZX-Pulses": ["Tur Dal"],
+                    "WIZX-Oilseeds": ["Soyabean"]
+                }
+                
+                # Calculate sector indices
+                sector_indices = get_sector_indices(sector_definitions)
+                
+                if sector_indices and "sector_indices" in sector_indices:
+                    sectors = sector_indices["sector_indices"]
+                    
+                    # Display metrics
+                    columns = st.columns(len(sectors))
+                    
+                    for i, (sector, data) in enumerate(sectors.items()):
+                        if data.get("success", False):
+                            with columns[i]:
+                                st.metric(
+                                    sector,
+                                    f"{data['value']:.2f}",
+                                    f"{data['change_percentage']:.2f}%"
+                                )
+                    
+                    # Time period selection for historical data
+                    time_period = st.radio(
+                        "Select Time Period",
+                        ["1 Month", "3 Months", "6 Months", "1 Year"],
+                        horizontal=True,
+                        key="sector_time_period"
+                    )
+                    
+                    days_map = {
+                        "1 Month": 30,
+                        "3 Months": 90,
+                        "6 Months": 180,
+                        "1 Year": 365
+                    }
+                    
+                    days = days_map[time_period]
+                    
+                    # Get historical data for each sector
+                    all_sector_data = []
+                    
+                    for sector in sectors.keys():
+                        historical = historical_index_performance(sector, days)
+                        
+                        if historical.get("success", False) and "values" in historical:
+                            for entry in historical["values"]:
+                                all_sector_data.append({
+                                    "Sector": sector,
+                                    "Date": entry["date"],
+                                    "Index Value": entry["value"]
+                                })
+                    
+                    if all_sector_data:
+                        sector_df = pd.DataFrame(all_sector_data)
+                        
+                        # Create line chart
+                        fig = px.line(
+                            sector_df,
+                            x="Date",
+                            y="Index Value",
+                            color="Sector",
+                            title="WIZX Sector Indices Comparison",
+                            labels={"Date": "Date", "Index Value": "Index Value"}
+                        )
+                        
+                        # Add reference line
+                        fig.add_hline(
+                            y=1000,
+                            line_dash="dash",
+                            line_color="gray",
+                            annotation_text="Base Value (1000)"
+                        )
+                        
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Display sector composition
+                        st.subheader("Sector Composition")
+                        
+                        for sector, commodities in sector_definitions.items():
+                            st.write(f"**{sector}**: {', '.join(commodities)}")
+                else:
+                    st.error("Failed to calculate sector indices.")
+            except Exception as e:
+                st.error(f"Error calculating sector indices: {e}")
+    
+    with tab4:
+        st.subheader("WIZX Index Analysis & Tools")
+        
+        analysis_option = st.selectbox(
+            "Select Analysis",
+            [
+                "Performance Comparison",
+                "Volatility Analysis",
+                "Seasonal Patterns",
+                "Export Data"
+            ]
+        )
+        
+        if analysis_option == "Performance Comparison":
+            st.subheader("Performance Comparison")
+            
+            # Select time periods
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                commodities = get_all_commodities() + ["WIZX-Composite", "WIZX-Cereals", "WIZX-Pulses", "WIZX-Oilseeds"]
+                selected_items = st.multiselect(
+                    "Select Indices to Compare",
+                    commodities,
+                    default=["WIZX-Composite"] if "WIZX-Composite" in commodities else None
+                )
+            
+            with col2:
+                time_period = st.selectbox(
+                    "Time Period",
+                    ["1 Month", "3 Months", "6 Months", "1 Year"]
+                )
+                
+                days_map = {
+                    "1 Month": 30,
+                    "3 Months": 90,
+                    "6 Months": 180,
+                    "1 Year": 365
+                }
+                
+                days = days_map[time_period]
+            
+            if selected_items:
+                with st.spinner("Calculating performance metrics..."):
+                    try:
+                        # Get performance data
+                        performance_data = []
+                        
+                        for item in selected_items:
+                            performance = historical_index_performance(item, days)
+                            
+                            if performance.get("success", False) and "periodic_returns" in performance:
+                                returns = performance["periodic_returns"]
+                                
+                                performance_data.append({
+                                    "Index": item,
+                                    "Current Value": performance.get("current_value", "N/A"),
+                                    "Daily Change": returns.get("last_day", "N/A"),
+                                    "Weekly Return": returns.get("last_week", "N/A"),
+                                    "Monthly Return": returns.get("last_month", "N/A"),
+                                    "Quarterly Return": returns.get("last_quarter", "N/A"),
+                                    "Yearly Return": returns.get("last_year", "N/A"),
+                                    "Volatility": performance.get("volatility", "N/A")
+                                })
+                        
+                        if performance_data:
+                            # Display as table
+                            st.dataframe(pd.DataFrame(performance_data), use_container_width=True)
+                            
+                            # Create chart for periodic returns
+                            periodic_data = []
+                            
+                            for item in performance_data:
+                                # Daily change
+                                if item["Daily Change"] != "N/A":
+                                    periodic_data.append({
+                                        "Index": item["Index"],
+                                        "Period": "Daily",
+                                        "Return": item["Daily Change"]
+                                    })
+                                
+                                # Weekly return
+                                if item["Weekly Return"] != "N/A":
+                                    periodic_data.append({
+                                        "Index": item["Index"],
+                                        "Period": "Weekly",
+                                        "Return": item["Weekly Return"]
+                                    })
+                                
+                                # Monthly return
+                                if item["Monthly Return"] != "N/A":
+                                    periodic_data.append({
+                                        "Index": item["Index"],
+                                        "Period": "Monthly",
+                                        "Return": item["Monthly Return"]
+                                    })
+                                
+                                # Quarterly return
+                                if item["Quarterly Return"] != "N/A":
+                                    periodic_data.append({
+                                        "Index": item["Index"],
+                                        "Period": "Quarterly",
+                                        "Return": item["Quarterly Return"]
+                                    })
+                            
+                            if periodic_data:
+                                periodic_df = pd.DataFrame(periodic_data)
+                                
+                                # Create grouped bar chart
+                                fig = px.bar(
+                                    periodic_df,
+                                    x="Period",
+                                    y="Return",
+                                    color="Index",
+                                    barmode="group",
+                                    title="Periodic Returns Comparison",
+                                    labels={"Period": "Time Period", "Return": "Return (%)"}
+                                )
+                                
+                                st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.info("No performance data available for selected indices.")
+                    except Exception as e:
+                        st.error(f"Error calculating performance metrics: {e}")
+        
+        elif analysis_option == "Volatility Analysis":
+            st.subheader("Volatility Analysis")
+            
+            # Select time periods
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                commodities = get_all_commodities() + ["WIZX-Composite", "WIZX-Cereals", "WIZX-Pulses", "WIZX-Oilseeds"]
+                selected_items = st.multiselect(
+                    "Select Indices to Analyze",
+                    commodities,
+                    default=["WIZX-Composite"] if "WIZX-Composite" in commodities else None
+                )
+            
+            with col2:
+                time_period = st.selectbox(
+                    "Time Period",
+                    ["1 Month", "3 Months", "6 Months", "1 Year"],
+                    key="volatility_period"
+                )
+                
+                days_map = {
+                    "1 Month": 30,
+                    "3 Months": 90,
+                    "6 Months": 180,
+                    "1 Year": 365
+                }
+                
+                days = days_map[time_period]
+            
+            if selected_items:
+                with st.spinner("Calculating volatility metrics..."):
+                    try:
+                        # Get volatility data
+                        volatility_data = []
+                        
+                        for item in selected_items:
+                            performance = historical_index_performance(item, days)
+                            
+                            if performance.get("success", False):
+                                volatility_data.append({
+                                    "Index": item,
+                                    "Volatility (StdDev)": performance.get("volatility", "N/A"),
+                                    "Min Value": performance.get("min_value", "N/A"),
+                                    "Max Value": performance.get("max_value", "N/A"),
+                                    "Range": performance.get("max_value", 0) - performance.get("min_value", 0) if "max_value" in performance and "min_value" in performance else "N/A"
+                                })
+                        
+                        if volatility_data:
+                            # Display as table
+                            st.dataframe(pd.DataFrame(volatility_data), use_container_width=True)
+                            
+                            # Create volatility chart
+                            valid_items = [item for item in volatility_data if item["Volatility (StdDev)"] != "N/A"]
+                            
+                            if valid_items:
+                                volatility_df = pd.DataFrame(valid_items)
+                                
+                                # Create bar chart for volatility
+                                fig = px.bar(
+                                    volatility_df,
+                                    x="Index",
+                                    y="Volatility (StdDev)",
+                                    title="Volatility Comparison",
+                                    labels={"Index": "Index", "Volatility (StdDev)": "Volatility (Standard Deviation)"},
+                                    color="Volatility (StdDev)"
+                                )
+                                
+                                st.plotly_chart(fig, use_container_width=True)
+                                
+                                # Create range chart
+                                range_data = []
+                                
+                                for item in valid_items:
+                                    if item["Min Value"] != "N/A" and item["Max Value"] != "N/A":
+                                        range_data.append({
+                                            "Index": item["Index"],
+                                            "Min": item["Min Value"],
+                                            "Max": item["Max Value"]
+                                        })
+                                
+                                if range_data:
+                                    range_df = pd.DataFrame(range_data)
+                                    
+                                    # Create range chart
+                                    fig = go.Figure()
+                                    
+                                    for i, row in range_df.iterrows():
+                                        fig.add_trace(go.Bar(
+                                            name=row["Index"],
+                                            x=[row["Index"]],
+                                            y=[row["Max"] - row["Min"]],
+                                            base=row["Min"],
+                                            marker_color=px.colors.qualitative.Plotly[i % len(px.colors.qualitative.Plotly)]
+                                        ))
+                                    
+                                    fig.update_layout(
+                                        title="Price Range During Period",
+                                        xaxis_title="Index",
+                                        yaxis_title="Index Value",
+                                        barmode="group"
+                                    )
+                                    
+                                    st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.info("No volatility data available for selected indices.")
+                    except Exception as e:
+                        st.error(f"Error calculating volatility metrics: {e}")
+        
+        elif analysis_option == "Seasonal Patterns":
+            st.subheader("Seasonal Patterns Analysis")
+            
+            # Select commodity and time period
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                commodities = get_all_commodities()
+                selected_commodity = st.selectbox(
+                    "Select Commodity",
+                    commodities,
+                    index=0 if commodities else None
+                )
+            
+            with col2:
+                year_count = st.slider("Number of Years to Analyze", 1, 5, 2)
+            
+            if selected_commodity:
+                with st.spinner("Analyzing seasonal patterns..."):
+                    try:
+                        # Calculate days
+                        days = year_count * 365
+                        
+                        # Get historical data
+                        historical = historical_index_performance(selected_commodity, days)
+                        
+                        if historical.get("success", False) and "values" in historical:
+                            values = historical["values"]
+                            
+                            # Create dataframe
+                            df = pd.DataFrame(values)
+                            
+                            # Convert date to datetime if it's not already
+                            if not pd.api.types.is_datetime64_any_dtype(df["date"]):
+                                df["date"] = pd.to_datetime(df["date"])
+                            
+                            # Extract month and year
+                            df["month"] = df["date"].dt.month
+                            df["year"] = df["date"].dt.year
+                            df["month_name"] = df["date"].dt.strftime("%b")
+                            
+                            # Calculate monthly averages
+                            monthly_avg = df.groupby(["year", "month", "month_name"])["value"].mean().reset_index()
+                            
+                            # Create heatmap
+                            pivot_table = monthly_avg.pivot_table(
+                                values="value",
+                                index="year",
+                                columns="month_name",
+                                aggfunc="mean"
+                            )
+                            
+                            # Reorder columns by month
+                            month_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+                            pivot_table = pivot_table[pivot_table.columns.intersection(month_order).sort_values(key=lambda m: month_order.index(m))]
+                            
+                            # Create heatmap
+                            fig = px.imshow(
+                                pivot_table,
+                                labels=dict(x="Month", y="Year", color="Index Value"),
+                                title=f"Seasonal Pattern for {selected_commodity}",
+                                color_continuous_scale="Viridis"
+                            )
+                            
+                            st.plotly_chart(fig, use_container_width=True)
+                            
+                            # Calculate overall monthly averages
+                            overall_monthly = df.groupby("month_name")["value"].mean().reset_index()
+                            
+                            # Sort by month order
+                            overall_monthly["month_idx"] = overall_monthly["month_name"].apply(lambda x: month_order.index(x) if x in month_order else 999)
+                            overall_monthly = overall_monthly.sort_values("month_idx")
+                            
+                            # Create bar chart
+                            fig = px.bar(
+                                overall_monthly,
+                                x="month_name",
+                                y="value",
+                                title=f"Average Monthly Values for {selected_commodity}",
+                                labels={"month_name": "Month", "value": "Average Index Value"},
+                                color="value"
+                            )
+                            
+                            st.plotly_chart(fig, use_container_width=True)
+                            
+                            # Display month-over-month changes
+                            if len(df) > 30:
+                                # Calculate monthly average changes
+                                df["pct_change"] = df.groupby("year")["value"].pct_change() * 100
+                                
+                                monthly_change = df.groupby("month_name")["pct_change"].mean().reset_index()
+                                monthly_change["month_idx"] = monthly_change["month_name"].apply(lambda x: month_order.index(x) if x in month_order else 999)
+                                monthly_change = monthly_change.sort_values("month_idx")
+                                
+                                # Create bar chart for monthly changes
+                                fig = px.bar(
+                                    monthly_change,
+                                    x="month_name",
+                                    y="pct_change",
+                                    title=f"Average Monthly Price Changes for {selected_commodity}",
+                                    labels={"month_name": "Month", "pct_change": "Average Change (%)"},
+                                    color="pct_change",
+                                    color_continuous_scale="RdBu_r"
+                                )
+                                
+                                # Add zero line
+                                fig.add_hline(
+                                    y=0,
+                                    line_dash="dash",
+                                    line_color="gray"
+                                )
+                                
+                                st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.info("Insufficient historical data available for seasonal analysis.")
+                    except Exception as e:
+                        st.error(f"Error analyzing seasonal patterns: {e}")
+        
+        elif analysis_option == "Export Data":
+            st.subheader("Export WIZX Index Data")
+            
+            # Select export options
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Select commodities
+                commodities = get_all_commodities() + ["WIZX-Composite", "WIZX-Cereals", "WIZX-Pulses", "WIZX-Oilseeds"]
+                selected_items = st.multiselect(
+                    "Select Indices to Export",
+                    commodities,
+                    default=["WIZX-Composite"] if "WIZX-Composite" in commodities else []
+                )
+            
+            with col2:
+                # Select date range
+                date_range = st.date_input(
+                    "Select Date Range",
+                    value=(date.today() - timedelta(days=30), date.today()),
+                    max_value=date.today()
+                )
+            
+            if len(date_range) == 2 and selected_items:
+                start_date, end_date = date_range
+                
+                if st.button("Export WIZX Data"):
+                    with st.spinner("Preparing export..."):
+                        try:
+                            export_result = export_indices(
+                                start_date=start_date,
+                                end_date=end_date,
+                                commodities=selected_items
+                            )
+                            
+                            if export_result.get("success", False):
+                                st.success(f"Data exported successfully to {export_result['file_path']}")
+                                
+                                # Display preview
+                                try:
+                                    preview_df = pd.read_csv(export_result['file_path'])
+                                    st.subheader("Data Preview")
+                                    st.dataframe(preview_df.head(10), use_container_width=True)
+                                    
+                                    # Provide download link
+                                    with open(export_result['file_path'], 'rb') as f:
+                                        st.download_button(
+                                            label="Download CSV File",
+                                            data=f,
+                                            file_name=os.path.basename(export_result['file_path']),
+                                            mime="text/csv"
+                                        )
+                                except Exception as e:
+                                    st.error(f"Error displaying preview: {e}")
+                            else:
+                                st.error(f"Export failed: {export_result.get('message', 'Unknown error')}")
+                        except Exception as e:
+                            st.error(f"Error exporting data: {e}")
+
+elif page == "Data Submission":
+    st.header("Data Submission & Community Contribution")
+    
+    st.markdown("""
+    Help improve the accuracy and coverage of our price data by submitting your own observations.
+    Contributors with verified submissions earn reward points that can be redeemed for benefits.
+    """)
+    
+    tab1, tab2, tab3 = st.tabs(["Submit Data", "Check Status", "Leaderboard"])
+    
+    with tab1:
+        st.subheader("Submit Market Price Data")
+        
+        # User identification
+        user_email = st.text_input("Your Email (for tracking contributions)")
+        
+        # Price data form
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Basic information
+            commodities = get_all_commodities()
+            selected_commodity = st.selectbox(
+                "Commodity",
+                commodities,
+                index=0 if commodities else None,
+                key="submit_commodity"
+            )
+            
+            if selected_commodity:
+                regions = get_regions(selected_commodity)
+                selected_region = st.selectbox(
+                    "Region/Market",
+                    regions,
+                    index=0 if regions else None,
+                    key="submit_region"
+                )
+                
+                market_name = st.text_input("Specific Market/Mandi (Optional)")
+                
+                observed_date = st.date_input(
+                    "Observation Date",
+                    value=date.today(),
+                    max_value=date.today()
+                )
+                
+                price = st.number_input(
+                    "Price (₹ per Quintal)",
+                    min_value=0.0,
+                    value=0.0,
+                    step=100.0
+                )
+        
+        with col2:
+            st.subheader("Quality Parameters (Optional)")
+            
+            quality_params = {}
+            
+            if selected_commodity:
+                commodity_data = get_commodity_data(selected_commodity)
+                
+                if commodity_data and 'quality_parameters' in commodity_data:
+                    for param, details in commodity_data['quality_parameters'].items():
+                        default_value = details.get('standard_value', (details.get('min', 0) + details.get('max', 100)) / 2)
+                        min_value = details.get('min', 0)
+                        max_value = details.get('max', 100)
+                        
+                        param_value = st.slider(
+                            f"{param} ({details.get('unit', '')})", 
+                            min_value=min_value,
+                            max_value=max_value,
+                            value=default_value,
+                            step=details.get('step', 0.1),
+                            key=f"submit_quality_{param}"
+                        )
+                        
+                        quality_params[param] = param_value
+        
+        # Source details
+        st.subheader("Source Information")
+        
+        source_options = ["Direct Observation", "Local Dealer", "Farmer", "Market Committee", "News/Media", "Other"]
+        source_type = st.selectbox("Source Type", source_options)
+        
+        source_details = st.text_area("Additional Details (Optional)", height=100)
+        
+        if st.button("Submit Price Data"):
+            if not user_email:
+                st.error("Please provide your email address for tracking contributions.")
+            elif not selected_commodity or not selected_region or price <= 0:
+                st.error("Please fill in all required fields: Commodity, Region, and Price.")
+            else:
+                with st.spinner("Submitting data..."):
+                    try:
+                        # Prepare source details
+                        source_info = {
+                            "type": source_type,
+                            "details": source_details,
+                            "market": market_name
+                        }
+                        
+                        # Submit data
+                        result = submit_price_data(
+                            user_email=user_email,
+                            commodity=selected_commodity,
+                            region=selected_region,
+                            price=price,
+                            date_val=observed_date,
+                            quality_params=quality_params,
+                            market=market_name,
+                            source_details=source_info
+                        )
+                        
+                        if result.get("success", False):
+                            st.success(result.get("message", "Data submitted successfully!"))
+                            
+                            # Verify automatically
+                            verify_result = auto_verify_submission(result.get("submission_id"))
+                            
+                            if verify_result.get("verified", False):
+                                st.success("Your submission has been automatically verified!")
+                            elif verify_result.get("requires_manual_review", False):
+                                st.info("Your submission will be reviewed manually by our team.")
+                            
+                            # Calculate price recommendation for comparison
+                            recommendation = get_price_recommendation(
+                                selected_commodity, 
+                                quality_params,
+                                selected_region
+                            )
+                            
+                            if recommendation and 'recommended_price' in recommendation:
+                                st.subheader("Your submission compared to recommendations")
+                                
+                                col1, col2, col3 = st.columns(3)
+                                
+                                with col1:
+                                    st.metric(
+                                        "Your Submitted Price",
+                                        f"₹{price:.2f}"
+                                    )
+                                
+                                with col2:
+                                    st.metric(
+                                        "Recommended Price",
+                                        f"₹{recommendation['recommended_price']:.2f}",
+                                        f"{((price - recommendation['recommended_price']) / recommendation['recommended_price'] * 100):.2f}%"
+                                    )
+                                
+                                with col3:
+                                    st.metric(
+                                        "Confidence",
+                                        recommendation['confidence'].title()
+                                    )
+                        else:
+                            st.error(result.get("message", "Failed to submit data."))
+                    except Exception as e:
+                        st.error(f"Error submitting data: {e}")
+    
+    with tab2:
+        st.subheader("Check Submission Status")
+        
+        user_identifier = st.text_input("Enter Your Email or User ID")
+        
+        if user_identifier:
+            if st.button("Check Status"):
+                with st.spinner("Fetching submission status..."):
+                    try:
+                        # Get user submission status
+                        status = get_user_submission_status(user_identifier)
+                        
+                        if status and "user_id" in status:
+                            if status.get("total_submissions", 0) > 0:
+                                # Display metrics
+                                col1, col2, col3, col4 = st.columns(4)
+                                
+                                with col1:
+                                    st.metric("Total Submissions", status.get("total_submissions", 0))
+                                
+                                with col2:
+                                    st.metric("Verified", status.get("verified_submissions", 0))
+                                
+                                with col3:
+                                    st.metric("Pending Review", status.get("pending_submissions", 0))
+                                
+                                with col4:
+                                    st.metric("Reward Points", status.get("total_reward_points", 0))
+                                
+                                # Display recent submissions
+                                if "recent_submissions" in status:
+                                    st.subheader("Recent Submissions")
+                                    
+                                    # Convert to dataframe
+                                    submissions_df = pd.DataFrame(status["recent_submissions"])
+                                    
+                                    # Format dataframe
+                                    if not submissions_df.empty:
+                                        # Reorder columns
+                                        columns = ["id", "commodity", "region", "date", "price", "is_verified", "verification_score", "reward_points"]
+                                        display_columns = [c for c in columns if c in submissions_df.columns]
+                                        
+                                        # Rename columns
+                                        rename_map = {
+                                            "id": "ID",
+                                            "commodity": "Commodity",
+                                            "region": "Region",
+                                            "date": "Date",
+                                            "price": "Price (₹)",
+                                            "is_verified": "Verified",
+                                            "verification_score": "Score",
+                                            "reward_points": "Points"
+                                        }
+                                        
+                                        # Display
+                                        st.dataframe(
+                                            submissions_df[display_columns].rename(columns=rename_map),
+                                            use_container_width=True
+                                        )
+                                
+                                # Display commodity breakdown
+                                if "commodity_breakdown" in status and status["commodity_breakdown"]:
+                                    st.subheader("Commodity Breakdown")
+                                    
+                                    # Convert to dataframe
+                                    breakdown_data = []
+                                    
+                                    for commodity, data in status["commodity_breakdown"].items():
+                                        breakdown_data.append({
+                                            "Commodity": commodity,
+                                            "Submissions": data.get("submissions", 0),
+                                            "Points": data.get("points", 0)
+                                        })
+                                    
+                                    if breakdown_data:
+                                        breakdown_df = pd.DataFrame(breakdown_data)
+                                        
+                                        # Create bar chart
+                                        fig = px.bar(
+                                            breakdown_df,
+                                            x="Commodity",
+                                            y="Points",
+                                            title="Points Earned by Commodity",
+                                            color="Submissions",
+                                            labels={"Points": "Reward Points"}
+                                        )
+                                        
+                                        st.plotly_chart(fig, use_container_width=True)
+                            else:
+                                st.info("You have not submitted any data yet.")
+                        else:
+                            st.warning("No submissions found for this email or user ID.")
+                    except Exception as e:
+                        st.error(f"Error fetching submission status: {e}")
+    
+    with tab3:
+        st.subheader("Community Leaderboard")
+        
+        # Time period selection
+        period_options = {
+            "Last Week": 7,
+            "Last Month": 30,
+            "Last Quarter": 90,
+            "Last Year": 365,
+            "All Time": 3650
+        }
+        
+        selected_period = st.selectbox("Time Period", list(period_options.keys()))
+        days = period_options[selected_period]
+        
+        with st.spinner("Fetching leaderboard..."):
+            try:
+                # Get leaderboard
+                leaderboard_data = get_leaderboard(days=days, limit=50)
+                
+                if leaderboard_data and "leaderboard" in leaderboard_data:
+                    leaderboard = leaderboard_data["leaderboard"]
+                    
+                    if leaderboard:
+                        # Display top contributors
+                        st.subheader(f"Top Contributors - {selected_period}")
+                        
+                        # Convert to dataframe
+                        leaderboard_df = pd.DataFrame([
+                            {
+                                "Rank": item["rank"],
+                                "User ID": item["user_id"],
+                                "Submissions": item["submissions"],
+                                "Points": item["points"],
+                                "Top Commodities": ", ".join([f"{c['name']} ({c['submissions']})" for c in item["top_commodities"]]) if "top_commodities" in item else ""
+                            }
+                            for item in leaderboard
+                        ])
+                        
+                        # Display table
+                        st.dataframe(leaderboard_df, use_container_width=True)
+                        
+                        # Create bar chart for top contributors
+                        top_10 = leaderboard_df.head(10).copy()
+                        
+                        if not top_10.empty:
+                            # Create horizontal bar chart
+                            fig = px.bar(
+                                top_10,
+                                y="User ID",
+                                x="Points",
+                                title="Top 10 Contributors",
+                                color="Points",
+                                orientation="h",
+                                labels={"Points": "Reward Points"}
+                            )
+                            
+                            # Sort by points
+                            fig.update_layout(yaxis={'categoryorder':'total ascending'})
+                            
+                            st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.info("No contributors found for the selected period.")
+                else:
+                    st.info("No leaderboard data available.")
+            except Exception as e:
+                st.error(f"Error fetching leaderboard: {e}")
+
+elif page == "Data Cleaning":
+    st.header("Data Cleaning & Quality Control")
+    
+    st.markdown("""
+    This page provides tools for cleaning and validating commodity price data.
+    Use these tools to ensure data quality and consistency for accurate price analysis.
+    """)
+    
+    tab1, tab2, tab3 = st.tabs(["Anomaly Detection", "Data Validation", "Data Cleaning"])
+    
+    with tab1:
+        st.subheader("Price Anomaly Detection")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Commodity selection
+            commodities = get_all_commodities()
+            selected_commodity = st.selectbox(
+                "Select Commodity",
+                ["All Commodities"] + commodities,
+                index=0,
+                key="anomaly_commodity"
+            )
+            
+            commodity_param = None if selected_commodity == "All Commodities" else selected_commodity
+            
+            # Region selection
+            if commodity_param:
+                regions = ["All Regions"] + get_regions(commodity_param)
+                selected_region = st.selectbox(
+                    "Select Region",
+                    regions,
+                    index=0,
+                    key="anomaly_region"
+                )
+                
+                region_param = None if selected_region == "All Regions" else selected_region
+            else:
+                region_param = None
+        
+        with col2:
+            # Detection parameters
+            time_period = st.selectbox(
+                "Time Period",
+                ["Last 7 Days", "Last 30 Days", "Last 90 Days", "Last Year"],
+                index=1,
+                key="anomaly_time_period"
+            )
+            
+            days_map = {
+                "Last 7 Days": 7,
+                "Last 30 Days": 30,
+                "Last 90 Days": 90,
+                "Last Year": 365
+            }
+            
+            days = days_map[time_period]
+            
+            method = st.selectbox(
+                "Detection Method",
+                ["isolation_forest", "dbscan"],
+                index=0,
+                key="anomaly_method"
+            )
+        
+        if st.button("Detect Anomalies"):
+            with st.spinner("Detecting price anomalies..."):
+                try:
+                    # Detect anomalies
+                    anomalies = detect_price_anomalies(commodity_param, region_param, days, method)
+                    
+                    if anomalies and "results" in anomalies:
+                        results = anomalies["results"]
+                        
+                        if results:
+                            st.success(f"Detected {anomalies.get('total_anomalies', 0)} anomalies out of {anomalies.get('total_points', 0)} price points.")
+                            
+                            # Display results
+                            for result in results:
+                                st.subheader(f"{result['commodity']} - {result['region']}")
+                                
+                                st.write(f"Found {len(result['anomalies'])} anomalies out of {result['total_points']} price points ({result['anomaly_percentage']:.1f}%).")
+                                
+                                # Create chart
+                                if result['anomalies']:
+                                    # Create dataframe
+                                    anomaly_df = pd.DataFrame([
+                                        {
+                                            "id": a["id"],
+                                            "date": a["date"],
+                                            "price": a["price"],
+                                            "expected_min": a["expected_range"][0],
+                                            "expected_max": a["expected_range"][1]
+                                        }
+                                        for a in result['anomalies']
+                                    ])
+                                    
+                                    # Create chart
+                                    fig = px.scatter(
+                                        anomaly_df,
+                                        x="date",
+                                        y="price",
+                                        title=f"Price Anomalies for {result['commodity']} in {result['region']}",
+                                        labels={"date": "Date", "price": "Price (₹/Quintal)"}
+                                    )
+                                    
+                                    # Add range
+                                    if len(anomaly_df) > 0:
+                                        min_date = min(anomaly_df["date"])
+                                        max_date = max(anomaly_df["date"])
+                                        avg_min = anomaly_df["expected_min"].mean()
+                                        avg_max = anomaly_df["expected_max"].mean()
+                                        
+                                        fig.add_shape(
+                                            type="rect",
+                                            x0=min_date,
+                                            x1=max_date,
+                                            y0=avg_min,
+                                            y1=avg_max,
+                                            line=dict(color="Green"),
+                                            fillcolor="rgba(0,255,0,0.1)",
+                                            name="Expected Range"
+                                        )
+                                    
+                                    st.plotly_chart(fig, use_container_width=True)
+                                    
+                                    # Display anomalies table
+                                    st.write("Anomalous Prices:")
+                                    st.dataframe(anomaly_df, use_container_width=True)
+                        else:
+                            st.info("No anomalies detected for the specified parameters.")
+                    else:
+                        st.info("No anomalies detected.")
+                except Exception as e:
+                    st.error(f"Error detecting anomalies: {e}")
+    
+    with tab2:
+        st.subheader("Price Curve Validation")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Commodity selection
+            commodities = get_all_commodities()
+            validate_commodity = st.selectbox(
+                "Select Commodity",
+                commodities,
+                index=0 if commodities else None,
+                key="validate_commodity"
+            )
+            
+            if validate_commodity:
+                regions = ["All Regions"] + get_regions(validate_commodity)
+                validate_region = st.selectbox(
+                    "Select Region",
+                    regions,
+                    index=0,
+                    key="validate_region"
+                )
+                
+                region_param = None if validate_region == "All Regions" else validate_region
+            else:
+                region_param = None
+        
+        with col2:
+            # Validation parameters
+            time_period = st.selectbox(
+                "Time Period",
+                ["Last 7 Days", "Last 30 Days", "Last 90 Days", "Last Year"],
+                index=1,
+                key="validate_time_period"
+            )
+            
+            days_map = {
+                "Last 7 Days": 7,
+                "Last 30 Days": 30,
+                "Last 90 Days": 90,
+                "Last Year": 365
+            }
+            
+            days = days_map[time_period]
+        
+        if validate_commodity and st.button("Validate Price Curves"):
+            with st.spinner("Validating price curves..."):
+                try:
+                    # Validate price curve
+                    validation = validate_price_curve(validate_commodity, region_param, days)
+                    
+                    if validation and "results" in validation:
+                        results = validation["results"]
+                        
+                        if results:
+                            # Display summary
+                            valid_count = sum(1 for r in results if r["valid"])
+                            st.write(f"Validation completed for {len(results)} regions. {valid_count} valid, {len(results) - valid_count} with issues.")
+                            
+                            # Create tabs for each region
+                            region_tabs = st.tabs([r["region"] for r in results])
+                            
+                            for i, result in enumerate(results):
+                                with region_tabs[i]:
+                                    if result["valid"]:
+                                        st.success(f"Price curve for {result['region']} is valid.")
+                                    else:
+                                        st.warning(f"Found {len(result['issues'])} issues in price curve for {result['region']}.")
+                                        
+                                        # Display issues
+                                        for issue in result["issues"]:
+                                            issue_type = issue["type"]
+                                            
+                                            if issue_type == "large_jump":
+                                                st.warning(f"Large price jump detected on {issue['date']}: {issue['change']:.1f}% change to ₹{issue['price']:.2f}")
+                                            elif issue_type == "constant_price":
+                                                st.info(f"Constant price period: ₹{issue['price']:.2f} for {issue['days']} days starting {issue['start_date']}")
+                                            elif issue_type == "missing_dates":
+                                                st.error(f"Missing data: {issue['count']} missing dates")
+                                                if issue['count'] < 10:
+                                                    st.write(f"Missing dates: {', '.join(str(d) for d in issue['dates'])}")
+                                        
+                                        # Offer to fix issues
+                                        st.write("Would you like to fix these issues?")
+                                        fix_options = []
+                                        
+                                        for issue in result["issues"]:
+                                            if issue["type"] == "missing_dates":
+                                                fix_options.append("Fill missing dates with interpolation")
+                                            elif issue["type"] == "large_jump":
+                                                fix_options.append("Smooth large price jumps")
+                                        
+                                        if fix_options:
+                                            selected_fixes = st.multiselect(
+                                                "Select fixes to apply",
+                                                fix_options,
+                                                key=f"fixes_{result['region']}"
+                                            )
+                                            
+                                            if selected_fixes and st.button(f"Apply Fixes for {result['region']}"):
+                                                with st.spinner("Applying fixes..."):
+                                                    if "Fill missing dates with interpolation" in selected_fixes:
+                                                        missing_fix = fix_missing_data(validate_commodity, days=days)
+                                                        if missing_fix.get("fixed", 0) > 0:
+                                                            st.success(f"Fixed {missing_fix['fixed']} missing data points.")
+                                                        else:
+                                                            st.info("No missing data points were fixed.")
+                                                    
+                                                    # Run validation again
+                                                    new_validation = validate_price_curve(validate_commodity, result["region"], days)
+                                                    if new_validation and "results" in new_validation:
+                                                        new_result = next((r for r in new_validation["results"] if r["region"] == result["region"]), None)
+                                                        if new_result:
+                                                            if new_result["valid"]:
+                                                                st.success(f"Price curve for {new_result['region']} is now valid.")
+                                                            else:
+                                                                st.warning(f"Price curve for {new_result['region']} still has {len(new_result['issues'])} issues.")
+                        else:
+                            st.info("No validation results available.")
+                    else:
+                        st.error("Validation failed.")
+                except Exception as e:
+                    st.error(f"Error validating price curves: {e}")
+    
+    with tab3:
+        st.subheader("Run Data Cleaning Pipeline")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Commodity selection
+            commodities = get_all_commodities()
+            cleaning_commodity = st.selectbox(
+                "Select Commodity",
+                ["All Commodities"] + commodities,
+                index=0,
+                key="cleaning_commodity"
+            )
+            
+            commodity_param = None if cleaning_commodity == "All Commodities" else cleaning_commodity
+        
+        with col2:
+            # Cleaning parameters
+            time_period = st.selectbox(
+                "Time Period",
+                ["Last 7 Days", "Last 30 Days", "Last 90 Days", "Last Year"],
+                index=1,
+                key="cleaning_time_period"
+            )
+            
+            days_map = {
+                "Last 7 Days": 7,
+                "Last 30 Days": 30,
+                "Last 90 Days": 90,
+                "Last Year": 365
+            }
+            
+            days = days_map[time_period]
+        
+        if st.button("Run Data Cleaning"):
+            with st.spinner("Running data cleaning pipeline..."):
+                try:
+                    # Run data cleaning pipeline
+                    cleaning_results = clean_data_pipeline(commodity_param, days)
+                    
+                    if cleaning_results:
+                        if "error" in cleaning_results:
+                            st.error(f"Error in data cleaning pipeline: {cleaning_results['error']}")
+                        else:
+                            st.success(cleaning_results.get("summary", "Data cleaning completed successfully."))
+                            
+                            # Display cleaning stats
+                            col1, col2, col3, col4 = st.columns(4)
+                            
+                            with col1:
+                                st.metric("Anomalies Detected", cleaning_results.get("anomalies_detected", 0))
+                            
+                            with col2:
+                                st.metric("Missing Data Fixed", cleaning_results.get("missing_data_fixed", 0))
+                            
+                            with col3:
+                                st.metric("Validation Issues", cleaning_results.get("validation_issues", 0))
+                            
+                            with col4:
+                                st.metric("Rules Applied", cleaning_results.get("rules_applied", 0))
+                    else:
+                        st.error("Data cleaning failed.")
+                except Exception as e:
+                    st.error(f"Error running data cleaning pipeline: {e}")
 
 elif page == "Data Explorer":
     st.header("Data Explorer")
