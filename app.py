@@ -161,9 +161,9 @@ if page == "Price Dashboard":
             
             **Breakdown:**
             - Base Price: ₹{price_data['base_price']:.2f}
-            - Quality Adjustment: ₹{price_data['quality_delta']:.2f}
-            - Location Factor: ₹{price_data['location_delta']:.2f}
-            - Market Conditions: ₹{price_data['market_delta']:.2f}
+            - Quality Adjustment: ₹{price_data['quality_delta']:.2f} ({price_data['quality_delta']/price_data['base_price']*100:.2f}% from base)
+            - Location Factor: ₹{price_data['location_delta']:.2f} ({price_data['location_delta']/price_data['base_price']*100:.2f}% from base)
+            - Market Conditions: ₹{price_data['market_delta']:.2f} ({price_data['market_delta']/price_data['base_price']*100:.2f}% from base)
             """)
             
             # Create a waterfall chart to visualize price components
@@ -174,9 +174,9 @@ if page == "Price Dashboard":
                 x=["Base Price", "Quality Δ", "Location Δ", "Market Δ", "Final Price"],
                 textposition="outside",
                 text=[f"₹{price_data['base_price']:.2f}", 
-                      f"₹{price_data['quality_delta']:.2f}", 
-                      f"₹{price_data['location_delta']:.2f}", 
-                      f"₹{price_data['market_delta']:.2f}", 
+                      f"₹{price_data['quality_delta']:.2f} ({price_data['quality_delta']/price_data['base_price']*100:.1f}%)", 
+                      f"₹{price_data['location_delta']:.2f} ({price_data['location_delta']/price_data['base_price']*100:.1f}%)", 
+                      f"₹{price_data['market_delta']:.2f} ({price_data['market_delta']/price_data['base_price']*100:.1f}%)", 
                       f"₹{price_data['final_price']:.2f}"],
                 y=[price_data['base_price'], 
                    price_data['quality_delta'], 
@@ -186,13 +186,47 @@ if page == "Price Dashboard":
                 connector={"line": {"color": "rgb(63, 63, 63)"}},
             ))
             
+            # Add a delta gauge chart to visualize percentage change from base price
+            total_delta = price_data['quality_delta'] + price_data['location_delta'] + price_data['market_delta']
+            delta_percentage = (total_delta / price_data['base_price']) * 100
+            
+            # Create a delta gauge to show percentage deviation from base price
+            gauge_fig = go.Figure(go.Indicator(
+                mode="gauge+number+delta",
+                value=price_data['final_price'],
+                title={'text': "Price Delta from Base"},
+                domain={'x': [0, 1], 'y': [0, 1]},
+                gauge={
+                    'axis': {'range': [None, price_data['base_price'] * 1.5]},
+                    'bar': {'color': "darkblue"},
+                    'steps': [
+                        {'range': [0, price_data['base_price']], 'color': "lightgray"},
+                        {'range': [price_data['base_price'], price_data['base_price'] * 1.5], 'color': "gray"}
+                    ],
+                    'threshold': {
+                        'line': {'color': "red", 'width': 4},
+                        'thickness': 0.75,
+                        'value': price_data['base_price']
+                    }
+                },
+                delta={'reference': price_data['base_price'], 'relative': True, 'valueformat': '.1%'}
+            ))
+            
             fig.update_layout(
                 title="Price Component Breakdown",
                 showlegend=False,
                 height=400
             )
             
+            # Configure the gauge figure layout
+            gauge_fig.update_layout(
+                title="Deviation from Base Price",
+                height=300
+            )
+            
+            # Display price breakdown and delta gauge chart
             st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(gauge_fig, use_container_width=True)
             
     # Price history and trends
     if st.session_state.selected_commodity and st.session_state.selected_region:
@@ -394,9 +428,9 @@ elif page == "Quality Analysis":
                         
                         **Breakdown:**
                         - Base Price: ₹{base_price:.2f}
-                        - Quality Adjustment: ₹{quality_delta:.2f}
-                        - Location Factor: ₹{location_delta:.2f}
-                        - Market Conditions: ₹{market_delta:.2f}
+                        - Quality Adjustment: ₹{quality_delta:.2f} ({quality_delta/base_price*100:.2f}% from base)
+                        - Location Factor: ₹{location_delta:.2f} ({location_delta/base_price*100:.2f}% from base)
+                        - Market Conditions: ₹{market_delta:.2f} ({market_delta/base_price*100:.2f}% from base)
                         """)
             else:
                 st.error("Could not analyze the report. Please ensure it's a valid lab report.")
@@ -486,9 +520,9 @@ elif page == "Quality Analysis":
                         
                         **Breakdown:**
                         - Base Price: ₹{base_price:.2f}
-                        - Quality Adjustment: ₹{quality_delta:.2f}
-                        - Location Factor: ₹{location_delta:.2f}
-                        - Market Conditions: ₹{market_delta:.2f}
+                        - Quality Adjustment: ₹{quality_delta:.2f} ({quality_delta/base_price*100:.2f}% from base)
+                        - Location Factor: ₹{location_delta:.2f} ({location_delta/base_price*100:.2f}% from base)
+                        - Market Conditions: ₹{market_delta:.2f} ({market_delta/base_price*100:.2f}% from base)
                         """)
 
 elif page == "Market Trends":
