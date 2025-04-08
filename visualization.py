@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 
 from database import get_commodity_data
 from pricing_engine import calculate_price_curve, calculate_price
+from database_sql import get_price_history, get_regions, get_all_commodities
 
 # Configure logging
 logging.basicConfig(
@@ -608,6 +609,164 @@ def create_seasonal_price_chart(commodity, region, years=3):
     )
     
     return fig
+
+
+def get_multi_region_price_data(commodity, regions=None, days=30):
+    """
+    Get price history data for multiple regions for a single commodity.
+    
+    Args:
+        commodity (str): The commodity name
+        regions (list, optional): List of regions to include (if None, all regions are included)
+        days (int): Number of days of history to fetch
+        
+    Returns:
+        dict: Data suitable for creating a heatmap visualization
+    """
+    logger.info(f"Getting multi-region price data for {commodity} across {days} days")
+    
+    # If regions not specified, get all regions for this commodity
+    if regions is None:
+        regions = get_regions(commodity)
+    
+    if not regions:
+        logger.warning(f"No regions found for commodity {commodity}")
+        return None
+    
+    # Get price history for each region
+    price_data = {}
+    all_dates = set()
+    
+    for region in regions:
+        history = get_price_history(commodity, region, days)
+        if history:
+            price_data[region] = history
+            # Collect all dates
+            all_dates.update(item["date"] for item in history)
+    
+    if not price_data:
+        logger.warning(f"No price data found for {commodity} in any region")
+        return None
+    
+    # Create a sorted list of all dates
+    all_dates = sorted(list(all_dates))
+    
+    # Create a matrix of prices
+    date_indices = {date: i for i, date in enumerate(all_dates)}
+    price_matrix = np.zeros((len(regions), len(all_dates)))
+    price_matrix.fill(np.nan)  # Fill with NaN to represent missing data
+    
+    for i, region in enumerate(regions):
+        if region in price_data:
+            for item in price_data[region]:
+                j = date_indices[item["date"]]
+                price_matrix[i, j] = item["price"]
+    
+    # Return data suitable for heatmap
+    return {
+        "commodity": commodity,
+        "regions": regions,
+        "dates": all_dates,
+        "price_matrix": price_matrix
+    }
+
+
+def create_price_trend_heatmap(commodity, regions=None, days=30):
+    """
+    Create a heatmap visualization of price trends across multiple regions.
+    
+    Args:
+        commodity (str): The commodity name
+        regions (list, optional): List of regions to include (if None, all regions are included)
+        days (int): Number of days of history to display
+        
+    Returns:
+        go.Figure: Plotly figure object with interactive price trend heatmap
+    """
+    logger.info(f"Creating price trend heatmap for {commodity} across {days} days")
+    
+    # Get the data
+    heatmap_data = get_multi_region_price_data(commodity, regions, days)
+    
+    if not heatmap_data:
+        logger.warning(f"No data available for price trend heatmap for {commodity}")
+        return go.Figure()
+    
+    # Extract data components
+    regions = heatmap_data["regions"]
+    dates = heatmap_data["dates"]
+    price_matrix = heatmap_data["price_matrix"]
+    
+    # Format dates for display
+    date_labels = [d.strftime('%Y-%m-%d') for d in dates]
+    
+    # Calculate min, max, and mean prices (excluding NaNs)
+    valid_prices = price_matrix[~np.isnan(price_matrix)]
+    min_price = np.min(valid_prices) if valid_prices.size > 0 else 0
+    max_price = np.max(valid_prices) if valid_prices.size > 0 else 0
+    mean_price = np.mean(valid_prices) if valid_prices.size > 0 else 0
+    
+    # Create a custom color scale centered around the mean
+    mid_point = (mean_price - min_price) / (max_price - min_price) if max_price > min_price else 0.5
+    
+    # Create the heatmap
+    fig = go.Figure(data=go.Heatmap(
+        z=price_matrix,
+        x=date_labels,
+        y=regions,
+        colorscale='RdBu_r',  # Red-White-Blue color scale (reversed)
+        zmid=mean_price,      # Center the color scale at the mean
+        zmin=min_price,
+        zmax=max_price,
+        colorbar=dict(
+            title="Price (₹/Quintal)",
+            titleside="right"
+        ),
+        hoverongaps=False,
+        hovertemplate='Region: %{y}<br>Date: %{x}<br>Price: ₹%{z:.2f}/Quintal<extra></extra>'
+    ))
+    
+    # Update layout
+    fig.update_layout(
+        title=f"Price Trend Heatmap - {commodity} (Last {days} Days)",
+        xaxis_title="Date",
+        yaxis_title="Region",
+        height=max(400, 100 + (len(regions) * 30)),  # Dynamic height based on number of regions
+        width=max(700, 300 + (len(dates) * 15)),     # Dynamic width based on date range
+        xaxis=dict(
+            tickangle=-45,
+            type='category',
+            tickmode='array',
+            tickvals=date_labels[::max(1, len(dates)//10)],  # Show every nth date label to avoid crowding
+            ticktext=date_labels[::max(1, len(dates)//10)]
+        ),
+        yaxis=dict(
+            type='category'
+        ),
+        margin=dict(l=100, r=20, t=80, b=80)
+    )
+    
+    # Add annotation for mean price
+    fig.add_annotation(
+        x=0.5,
+        y=1.05,
+        xref="paper",
+        yref="paper",
+        text=f"Average Price: ₹{mean_price:.2f}/Quintal",
+        showarrow=False,
+        font=dict(
+            size=14,
+            color="black"
+        ),
+        align="center",
+        bgcolor="rgba(255, 255, 255, 0.8)",
+        bordercolor="rgba(0, 0, 0, 0.3)",
+        borderwidth=1,
+        borderpad=4
+    )
+    
+    return fig
+
 
 if __name__ == "__main__":
     # Test functions

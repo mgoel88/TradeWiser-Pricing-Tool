@@ -12,7 +12,7 @@ from PIL import Image
 from data_crawler import fetch_latest_agmarknet_data, fetch_commodity_list
 from data_processor import process_data, standardize_commodity
 from pricing_engine import calculate_price, get_price_history
-from visualization import create_price_trend_chart, create_quality_impact_chart
+from visualization import create_price_trend_chart, create_quality_impact_chart, create_price_trend_heatmap
 from quality_analyzer import analyze_quality_from_image, analyze_report
 from models import predict_price_trend
 
@@ -631,7 +631,7 @@ elif page == "Market Trends":
         
         analysis_type = st.selectbox(
             "Analysis Type",
-            ["Price Trends", "Regional Comparison", "Quality-Price Correlation", "Seasonal Analysis"]
+            ["Price Trends", "Regional Comparison", "Price Trend Heatmap", "Quality-Price Correlation", "Seasonal Analysis"]
         )
     
     with col2:
@@ -795,6 +795,60 @@ elif page == "Market Trends":
                         st.info(f"No regions found for {commodity}.")
                 else:
                     st.info("Please select a commodity for regional comparison.")
+            
+            elif analysis_type == "Price Trend Heatmap":
+                st.subheader("Price Trend Heatmap Analysis")
+                
+                if len(selected_commodities) > 0:
+                    commodity = selected_commodities[0]
+                    
+                    # Let the user select visualization options
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        regions_list = get_regions(commodity)
+                        if regions_list:
+                            selected_regions = st.multiselect(
+                                "Select Regions to Include",
+                                regions_list,
+                                default=regions_list[:min(5, len(regions_list))]  # Default to first 5 regions or less
+                            )
+                        else:
+                            selected_regions = []
+                    
+                    with col2:
+                        # Generate the heatmap
+                        if selected_regions:
+                            # Create the heatmap
+                            st.info("Generating heatmap... This may take a moment if there's a lot of data.")
+                            
+                            # Create the heatmap using our new function
+                            fig = create_price_trend_heatmap(commodity, regions=selected_regions, days=days)
+                            
+                            # Display heatmap
+                            st.plotly_chart(fig, use_container_width=True)
+                            
+                            # Display interpretation
+                            st.markdown("""
+                            ### Interpreting the Heatmap
+                            - **Colors**: Darker red indicates higher prices, darker blue indicates lower prices.
+                            - **White/Neutral Color**: Represents the average price.
+                            - **Missing Data**: Shown as blank spaces (no color).
+                            - **Hover**: Mouse over any cell to see exact price information.
+                            """)
+                            
+                            # Display insights based on the visualization
+                            st.subheader("Insights")
+                            st.markdown("""
+                            - Look for patterns across regions (rows) and time (columns).
+                            - Regional variations may indicate transportation issues or local market conditions.
+                            - Temporal patterns may indicate seasonality or market shocks.
+                            - Sudden changes in color intensity may indicate potential market anomalies.
+                            """)
+                        else:
+                            st.warning("Please select at least one region to generate the heatmap.")
+                else:
+                    st.info("Please select a commodity for heatmap analysis.")
             
             elif analysis_type == "Quality-Price Correlation":
                 st.subheader("Quality-Price Correlation Analysis")
