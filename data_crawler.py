@@ -9,6 +9,7 @@ import json
 import logging
 import requests
 import pandas as pd
+import numpy as np
 from datetime import datetime, timedelta
 from urllib.parse import urljoin
 import trafilatura

@@ -259,6 +259,28 @@ class DataCleaningRule(Base):
         return f"<DataCleaningRule(name='{self.name}', type='{self.rule_type}')>"
 
 
+class CrawlLog(Base):
+    """Log of crawler activities"""
+    __tablename__ = 'crawl_logs'
+    
+    id = Column(Integer, primary_key=True)
+    source = Column(String(100), nullable=False)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+    status = Column(String(50), nullable=False)
+    details = Column(JSON)
+    records_processed = Column(Integer, default=0)
+    
+    # Indexes
+    __table_args__ = (
+        Index('idx_crawl_logs_source', 'source'),
+        Index('idx_crawl_logs_timestamp', 'timestamp'),
+        Index('idx_crawl_logs_status', 'status'),
+    )
+    
+    def __repr__(self):
+        return f"<CrawlLog(source='{self.source}', status='{self.status}', timestamp='{self.timestamp}')>"
+
+
 #----------------------
 # Database Functions
 #----------------------
@@ -2208,6 +2230,324 @@ def add_global_price_index(data_list):
         session.rollback()
         logger.error(f"Error adding global price indices: {e}")
         return 0
+    finally:
+        session.close()
+
+
+def store_crawled_data(data_list, source="agmarknet"):
+    """
+    Store data fetched by the crawler in the database.
+    
+    Args:
+        data_list (list): List of data records
+        source (str): Source of the data (agmarknet, enam, etc.)
+        
+    Returns:
+        int: Number of records stored
+    """
+    session = Session()
+    added_count = 0
+    
+    try:
+        # Get source object
+        source_obj = session.query(DataSource).filter(DataSource.name.ilike(f"%{source}%")).first()
+        if not source_obj:
+            logger.warning(f"Data source '{source}' not found, using default")
+            source_obj = session.query(DataSource).first()
+        
+        # Process each data record
+        for data in data_list:
+            commodity_name = data.get('commodity')
+            if not commodity_name:
+                logger.warning(f"Skipping record without commodity name: {data}")
+                continue
+            
+            # Get or create commodity
+            commodity_obj = session.query(Commodity).filter(Commodity.name == commodity_name).first()
+            if not commodity_obj:
+                logger.info(f"Creating new commodity: {commodity_name}")
+                commodity_obj = Commodity(
+                    name=commodity_name,
+                    description=f"Auto-created from {source} data"
+                )
+                session.add(commodity_obj)
+                session.flush()
+            
+            # Get region name (state/market)
+            region_name = data.get('state') or data.get('market') or "Unknown"
+            
+            # Get or create region
+            region_obj = session.query(Region).filter(
+                Region.commodity_id == commodity_obj.id,
+                Region.name == region_name
+            ).first()
+            
+            if not region_obj:
+                logger.info(f"Creating new region: {region_name} for {commodity_name}")
+                region_obj = Region(
+                    commodity_id=commodity_obj.id,
+                    name=region_name,
+                    description=f"Auto-created from {source} data",
+                    base_price=data.get('modal_price') or data.get('avg_price') or 0.0,
+                    location_factor=1.0
+                )
+                session.add(region_obj)
+                session.flush()
+            
+            # Get price data
+            price_val = data.get('modal_price') or data.get('avg_price') or data.get('price') or 0.0
+            min_price = data.get('min_price', 0.0)
+            max_price = data.get('max_price', 0.0)
+            volume = data.get('arrival_qty') or data.get('traded_qty') or 0.0
+            
+            # Parse date
+            try:
+                date_str = data.get('date')
+                if date_str:
+                    date_val = datetime.strptime(date_str, '%Y-%m-%d').date()
+                else:
+                    date_val = date.today()
+            except Exception as e:
+                logger.error(f"Error parsing date '{date_str}': {e}, using today's date")
+                date_val = date.today()
+            
+            # Check for existing price point to avoid duplicates
+            existing_point = session.query(PricePoint).filter(
+                PricePoint.commodity_id == commodity_obj.id,
+                PricePoint.region_id == region_obj.id,
+                PricePoint.date == date_val,
+                PricePoint.source_id == source_obj.id
+            ).first()
+            
+            if existing_point:
+                logger.debug(f"Price point already exists for {commodity_name} in {region_name} on {date_val}")
+                existing_point.price = price_val
+                existing_point.min_price = min_price
+                existing_point.max_price = max_price
+                existing_point.volume = volume
+                existing_point.updated_at = datetime.utcnow()
+            else:
+                # Create new price point
+                price_point = PricePoint(
+                    commodity_id=commodity_obj.id,
+                    region_id=region_obj.id,
+                    date=date_val,
+                    price=price_val,
+                    min_price=min_price,
+                    max_price=max_price,
+                    volume=volume,
+                    source_id=source_obj.id,
+                    is_verified=True,  # Data from official sources is considered verified
+                    data_type="daily"
+                )
+                session.add(price_point)
+                added_count += 1
+        
+        # Add crawl log entry
+        crawl_log = CrawlLog(
+            source=source,
+            status="success",
+            details={"count": added_count},
+            records_processed=added_count
+        )
+        session.add(crawl_log)
+        
+        session.commit()
+        logger.info(f"Stored {added_count} records from {source}")
+        
+        return added_count
+        
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Error storing crawler data: {e}")
+        
+        # Log error
+        crawl_log = CrawlLog(
+            source=source,
+            status="error",
+            details={"error": str(e)},
+            records_processed=0
+        )
+        try:
+            session.add(crawl_log)
+            session.commit()
+        except:
+            pass
+        
+        return 0
+    
+    finally:
+        session.close()
+
+
+def update_price_data(data_list, data_type="historical"):
+    """
+    Update price data in the database, used for historical data updates.
+    
+    Args:
+        data_list (list): List of price data records
+        data_type (str): Type of data (historical, forecast, etc.)
+        
+    Returns:
+        int: Number of records updated/added
+    """
+    session = Session()
+    added_count = 0
+    
+    try:
+        for data in data_list:
+            commodity_name = data.get('commodity')
+            if not commodity_name:
+                logger.warning(f"Skipping record without commodity name: {data}")
+                continue
+            
+            region_name = data.get('region', 'All India')
+            price_val = data.get('price', 0.0)
+            
+            # Parse date
+            try:
+                date_str = data.get('date')
+                if date_str:
+                    date_val = datetime.strptime(date_str, '%Y-%m-%d').date()
+                else:
+                    logger.warning(f"Skipping record without date: {data}")
+                    continue
+            except Exception as e:
+                logger.error(f"Error parsing date '{date_str}': {e}, skipping record")
+                continue
+            
+            # Get or create commodity and region
+            commodity_obj = session.query(Commodity).filter(Commodity.name == commodity_name).first()
+            if not commodity_obj:
+                logger.info(f"Creating new commodity: {commodity_name}")
+                commodity_obj = Commodity(
+                    name=commodity_name,
+                    description=f"Auto-created for {data_type} data"
+                )
+                session.add(commodity_obj)
+                session.flush()
+            
+            region_obj = session.query(Region).filter(
+                Region.commodity_id == commodity_obj.id,
+                Region.name == region_name
+            ).first()
+            
+            if not region_obj:
+                logger.info(f"Creating new region: {region_name} for {commodity_name}")
+                region_obj = Region(
+                    commodity_id=commodity_obj.id,
+                    name=region_name,
+                    description=f"Auto-created for {data_type} data",
+                    base_price=price_val,
+                    location_factor=1.0
+                )
+                session.add(region_obj)
+                session.flush()
+            
+            # Get data source
+            source_obj = session.query(DataSource).filter(DataSource.name == "WIZX System").first()
+            if not source_obj:
+                source_obj = session.query(DataSource).first()
+            
+            # Check for existing price point
+            existing_point = session.query(PricePoint).filter(
+                PricePoint.commodity_id == commodity_obj.id,
+                PricePoint.region_id == region_obj.id,
+                PricePoint.date == date_val,
+                PricePoint.data_type == data_type
+            ).first()
+            
+            if existing_point:
+                existing_point.price = price_val
+                existing_point.updated_at = datetime.utcnow()
+            else:
+                # Create new price point
+                price_point = PricePoint(
+                    commodity_id=commodity_obj.id,
+                    region_id=region_obj.id,
+                    date=date_val,
+                    price=price_val,
+                    source_id=source_obj.id,
+                    is_verified=True,
+                    data_type=data_type
+                )
+                session.add(price_point)
+                added_count += 1
+        
+        # Add crawl log entry
+        crawl_log = CrawlLog(
+            source=f"{data_type}_update",
+            status="success",
+            details={"count": added_count},
+            records_processed=added_count
+        )
+        session.add(crawl_log)
+        
+        session.commit()
+        logger.info(f"Updated {added_count} {data_type} price records")
+        
+        return added_count
+        
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Error updating {data_type} price data: {e}")
+        
+        # Log error
+        crawl_log = CrawlLog(
+            source=f"{data_type}_update",
+            status="error",
+            details={"error": str(e)},
+            records_processed=0
+        )
+        try:
+            session.add(crawl_log)
+            session.commit()
+        except:
+            pass
+        
+        return 0
+    
+    finally:
+        session.close()
+
+
+def get_crawler_logs(source=None, limit=100):
+    """
+    Get crawler activity logs.
+    
+    Args:
+        source (str, optional): Filter by source
+        limit (int): Maximum number of logs to return
+        
+    Returns:
+        list: List of log entries
+    """
+    session = Session()
+    
+    try:
+        query = session.query(CrawlLog)
+        
+        if source:
+            query = query.filter(CrawlLog.source == source)
+        
+        logs = query.order_by(CrawlLog.timestamp.desc()).limit(limit).all()
+        
+        return [
+            {
+                "id": log.id,
+                "source": log.source,
+                "timestamp": log.timestamp.strftime('%Y-%m-%d %H:%M:%S'),
+                "status": log.status,
+                "details": log.details,
+                "records_processed": log.records_processed
+            }
+            for log in logs
+        ]
+    
+    except Exception as e:
+        logger.error(f"Error retrieving crawler logs: {e}")
+        return []
+    
     finally:
         session.close()
 
