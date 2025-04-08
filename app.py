@@ -75,7 +75,7 @@ except Exception as e:
 # Sidebar for navigation
 st.sidebar.title("Navigation")
 page = st.sidebar.radio("Select a page:", 
-    ["Price Dashboard", "Quality Analysis", "Market Trends", "WIZX Index", "Transportation Calculator", "Data Submission", "Data Explorer", "Data Cleaning"])
+    ["Price Dashboard", "Quality Analysis", "Market Trends", "WIZX Index", "Transportation Calculator", "Batch Calculator", "Data Submission", "Data Explorer", "Data Cleaning"])
 
 # Main content based on selected page
 if page == "Price Dashboard":
@@ -2471,6 +2471,65 @@ elif page == "Transportation Calculator":
         except Exception as e:
             st.error(f"Error calculating transport cost: {e}")
 
+elif page == "Batch Calculator":
+    st.header("Batch Price Calculator")
+    
+    st.markdown("""
+    Upload a CSV or Excel file containing multiple samples for bulk price calculation.
+    
+    Required columns:
+    - `commodity`: Commodity name
+    - `region`: Region name
+    - `quality_*`: Quality parameters (columns starting with 'quality_')
+    """)
+    
+    uploaded_file = st.file_uploader("Upload batch file", type=['csv', 'xlsx', 'xls'])
+    
+    if uploaded_file:
+        from batch_processor import process_batch_file
+        import tempfile
+        import os
+        
+        # Save uploaded file temporarily
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp:
+            tmp.write(uploaded_file.getvalue())
+            tmp_path = tmp.name
+        
+        try:
+            with st.spinner("Processing batch file..."):
+                result = process_batch_file(tmp_path)
+                
+                if result["success"]:
+                    st.success(f"Processed {result['processed_count']} samples successfully!")
+                    
+                    # Display results
+                    results_df = pd.DataFrame(result["results"])
+                    st.dataframe(results_df, use_container_width=True)
+                    
+                    # Provide download link
+                    with open(result["export_path"], 'rb') as f:
+                        st.download_button(
+                            "Download Results CSV",
+                            f,
+                            file_name=os.path.basename(result["export_path"]),
+                            mime="text/csv"
+                        )
+                else:
+                    st.error(result["message"])
+        finally:
+            # Cleanup temporary file
+            os.unlink(tmp_path)
+    
+    # Show sample format
+    st.subheader("Sample Format")
+    sample_data = {
+        "commodity": ["Wheat", "Rice"],
+        "region": ["North India", "South India"],
+        "quality_moisture": [12.0, 14.0],
+        "quality_foreign_matter": [1.0, 0.5]
+    }
+    st.dataframe(pd.DataFrame(sample_data), use_container_width=True)
+    
 elif page == "Data Explorer":
     st.header("Data Explorer")
     
