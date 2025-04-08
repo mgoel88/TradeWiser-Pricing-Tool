@@ -75,7 +75,7 @@ except Exception as e:
 # Sidebar for navigation
 st.sidebar.title("Navigation")
 page = st.sidebar.radio("Select a page:", 
-    ["Price Dashboard", "Quality Analysis", "Market Trends", "WIZX Index", "Data Submission", "Data Explorer", "Data Cleaning"])
+    ["Price Dashboard", "Quality Analysis", "Market Trends", "WIZX Index", "Transportation Calculator", "Data Submission", "Data Explorer", "Data Cleaning"])
 
 # Main content based on selected page
 if page == "Price Dashboard":
@@ -2341,6 +2341,135 @@ elif page == "Data Cleaning":
                         st.error("Data cleaning failed.")
                 except Exception as e:
                     st.error(f"Error running data cleaning pipeline: {e}")
+
+elif page == "Transportation Calculator":
+    st.header("Transportation Cost Calculator")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        distance = st.number_input("Distance (km)", min_value=1.0, value=100.0, step=10.0)
+        quantity = st.number_input("Quantity (quintals)", min_value=1.0, value=100.0, step=10.0)
+        transport_mode = st.selectbox(
+            "Transport Mode",
+            ["truck", "mini_truck", "tempo"],
+            format_func=lambda x: x.replace("_", " ").title()
+        )
+        
+    with col2:
+        fuel_price = st.number_input("Current Fuel Price (₹/L)", min_value=0.0, value=90.0, step=1.0)
+        toll_charges = st.number_input("Toll Charges (₹)", min_value=0.0, value=0.0, step=100.0)
+    
+    if st.button("Calculate Transport Cost"):
+        try:
+            from transportation import calculate_transport_cost, calculate_landed_cost
+            
+            # Calculate transport cost
+            transport_result = calculate_transport_cost(
+                distance=distance,
+                quantity=quantity,
+                transport_mode=transport_mode,
+                fuel_price=fuel_price,
+                toll_charges=toll_charges
+            )
+            
+            # Display results
+            st.subheader("Transport Cost Breakdown")
+            
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric("Total Cost", f"₹{transport_result['total_cost']:,.2f}")
+            
+            with col2:
+                st.metric("Per Quintal", f"₹{transport_result['per_quintal_cost']:,.2f}")
+            
+            with col3:
+                st.metric("Vehicles Needed", transport_result['vehicles_needed'])
+            
+            with col4:
+                st.metric("Effective Distance", f"{transport_result['distance']} km")
+            
+            # Create cost breakdown chart
+            cost_data = {
+                'Component': ['Base Cost', 'Fixed Costs', 'Fuel Adjustment', 'Toll Charges'],
+                'Amount': [
+                    transport_result['base_cost'],
+                    transport_result['fixed_costs'],
+                    transport_result['fuel_adjustment'],
+                    transport_result['toll_charges']
+                ]
+            }
+            
+            fig = px.pie(
+                cost_data,
+                values='Amount',
+                names='Component',
+                title='Transport Cost Components'
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Landed cost calculator
+            st.subheader("Total Landed Cost Calculator")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                base_price = st.number_input("Base Price (₹/quintal)", min_value=0.0, value=2000.0, step=100.0)
+                loading_cost = st.number_input("Loading Cost (₹/quintal)", min_value=0.0, value=50.0, step=10.0)
+                unloading_cost = st.number_input("Unloading Cost (₹/quintal)", min_value=0.0, value=50.0, step=10.0)
+            
+            with col2:
+                insurance_pct = st.number_input("Insurance (%)", min_value=0.0, value=0.5, step=0.1)
+                other_charges = st.number_input("Other Charges (₹/quintal)", min_value=0.0, value=0.0, step=10.0)
+            
+            if st.button("Calculate Landed Cost"):
+                # Calculate landed cost
+                landed_result = calculate_landed_cost(
+                    base_price=base_price,
+                    transport_cost=transport_result['per_quintal_cost'],
+                    loading_cost=loading_cost,
+                    unloading_cost=unloading_cost,
+                    insurance_pct=insurance_pct,
+                    other_charges=other_charges
+                )
+                
+                # Display landed cost breakdown
+                st.subheader("Landed Cost Breakdown")
+                
+                landed_data = pd.DataFrame({
+                    'Component': [
+                        'Base Price',
+                        'Transport Cost',
+                        'Loading Cost',
+                        'Unloading Cost',
+                        'Insurance',
+                        'Other Charges'
+                    ],
+                    'Amount': [
+                        landed_result['base_price'],
+                        landed_result['transport_cost'],
+                        landed_result['loading_cost'],
+                        landed_result['unloading_cost'],
+                        landed_result['insurance_amount'],
+                        landed_result['other_charges']
+                    ]
+                })
+                
+                fig = px.bar(
+                    landed_data,
+                    x='Component',
+                    y='Amount',
+                    title='Landed Cost Components (₹/quintal)'
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+                
+                st.success(f"Total Landed Cost: ₹{landed_result['total_landed_cost']:,.2f} per quintal")
+                
+        except Exception as e:
+            st.error(f"Error calculating transport cost: {e}")
 
 elif page == "Data Explorer":
     st.header("Data Explorer")
