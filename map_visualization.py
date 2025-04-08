@@ -90,23 +90,38 @@ def create_price_heatmap(prices_by_region, commodity):
     """
     Create a heatmap visualization of prices across regions.
     """
-    # Convert to matrix format
-    regions = list(prices_by_region.keys())
-    prices = list(prices_by_region.values())
+    # Create a more detailed matrix including all major regions
+    all_regions = ["North India", "South India", "East India", "West India", "Central India"]
+    prices_matrix = []
+    
+    # Get prices for each region, use None if not available
+    prices = [prices_by_region.get(region, None) for region in all_regions]
+    
+    # Create normalized prices for better visualization
+    max_price = max(p for p in prices if p is not None) if any(p is not None for p in prices) else 0
+    normalized_prices = [p/max_price if p is not None else 0 for p in prices]
     
     fig = go.Figure(data=go.Heatmap(
-        z=[prices],
-        x=regions,
+        z=[normalized_prices],
+        x=all_regions,
         y=[commodity],
         colorscale='RdBu_r',
-        colorbar=dict(title="Price (₹/Quintal)")
+        text=[[f"₹{p:,.2f}" if p is not None else "N/A" for p in prices]],
+        texttemplate="%{text}",
+        textfont={"size": 14},
+        colorbar=dict(
+            title="Price Index",
+            tickformat=".0%"
+        )
     ))
     
     fig.update_layout(
-        title=f"Price Heatmap - {commodity}",
+        title=f"Regional Price Distribution - {commodity}",
         xaxis_title="Region",
         yaxis_title="Commodity",
-        height=300
+        height=400,
+        font=dict(size=12),
+        margin=dict(t=50, b=50)
     )
     
     return fig
