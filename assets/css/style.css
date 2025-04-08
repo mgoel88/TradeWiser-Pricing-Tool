@@ -1,0 +1,262 @@
+/* Modern Streamlit Application Styling */
+
+/* Global custom CSS variables */
+:root {
+    --primary-color: #1E88E5;
+    --primary-light: #42a5f5;
+    --primary-dark: #0d47a1;
+    --secondary-color: #ff7043;
+    --gray-light: #f5f7f9;
+    --gray-medium: #e0e0e0;
+    --gray-dark: #757575;
+    --text-color: #212121;
+    --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.1);
+    --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.1);
+    --shadow-lg: 0 8px 16px rgba(0, 0, 0, 0.1);
+    --border-radius: 8px;
+    --spacing-xs: 4px;
+    --spacing-sm: 8px;
+    --spacing-md: 16px;
+    --spacing-lg: 24px;
+    --spacing-xl: 32px;
+}
+
+/* Typography enhancements */
+h1, h2, h3, h4, h5, h6 {
+    font-weight: 600;
+    letter-spacing: -0.025em;
+    margin-bottom: var(--spacing-md);
+}
+
+h1 {
+    font-size: 2.25rem;
+    color: var(--primary-dark);
+}
+
+h2 {
+    font-size: 1.75rem;
+    color: var(--primary-color);
+}
+
+h3 {
+    font-size: 1.5rem;
+    color: var(--primary-color);
+}
+
+/* Card-like containers */
+.card {
+    background-color: white;
+    border-radius: var(--border-radius);
+    padding: var(--spacing-lg);
+    box-shadow: var(--shadow-md);
+    margin-bottom: var(--spacing-lg);
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-lg);
+}
+
+/* Data visualization enhancements */
+.chart-container {
+    background-color: white;
+    border-radius: var(--border-radius);
+    padding: var(--spacing-md);
+    box-shadow: var(--shadow-sm);
+    margin-bottom: var(--spacing-lg);
+}
+
+/* Button styling */
+.stButton > button {
+    border-radius: var(--border-radius);
+    padding: var(--spacing-sm) var(--spacing-lg);
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.stButton > button:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
+}
+
+/* Primary button */
+.primary-button button {
+    background-color: var(--primary-color);
+    color: white;
+}
+
+.primary-button button:hover {
+    background-color: var(--primary-dark);
+}
+
+/* Secondary button */
+.secondary-button button {
+    background-color: var(--secondary-color);
+    color: white;
+}
+
+.secondary-button button:hover {
+    opacity: 0.9;
+}
+
+/* Outline button */
+.outline-button button {
+    background-color: transparent;
+    color: var(--primary-color);
+    border: 1px solid var(--primary-color);
+}
+
+.outline-button button:hover {
+    background-color: rgba(30, 136, 229, 0.1);
+}
+
+/* Form input styling */
+.stTextInput > div > div > input, 
+.stNumberInput > div > div > input,
+.stSelectbox > div > div,
+.stMultiselect > div > div {
+    border-radius: var(--border-radius);
+    border: 1px solid var(--gray-medium);
+    padding: var(--spacing-sm);
+}
+
+.stTextInput > div > div > input:focus, 
+.stNumberInput > div > div > input:focus,
+.stSelectbox > div > div:focus,
+.stMultiselect > div > div:focus {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(30, 136, 229, 0.2);
+}
+
+/* Metric displays */
+.metric-container {
+    background-color: white;
+    border-radius: var(--border-radius);
+    padding: var(--spacing-md);
+    text-align: center;
+    box-shadow: var(--shadow-sm);
+}
+
+.metric-value {
+    font-size: 2rem;
+    font-weight: 600;
+    color: var(--primary-color);
+}
+
+.metric-label {
+    color: var(--gray-dark);
+    font-size: 0.9rem;
+    margin-top: var(--spacing-xs);
+}
+
+/* Tabs styling */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 1px;
+}
+
+.stTabs [data-baseweb="tab"] {
+    height: auto;
+    padding: var(--spacing-sm) var(--spacing-lg);
+    background-color: transparent;
+    border-radius: var(--border-radius) var(--border-radius) 0 0;
+}
+
+.stTabs [aria-selected="true"] {
+    background-color: white;
+    border-top: 2px solid var(--primary-color);
+    font-weight: 600;
+}
+
+/* Table styling */
+.stDataFrame {
+    border-radius: var(--border-radius);
+    overflow: hidden;
+}
+
+.stDataFrame table {
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+.stDataFrame th {
+    background-color: var(--primary-light);
+    color: white;
+    padding: var(--spacing-sm) var(--spacing-md);
+}
+
+.stDataFrame tr:nth-child(even) {
+    background-color: var(--gray-light);
+}
+
+/* Dashboard statistics section */
+.stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: var(--spacing-md);
+    margin-bottom: var(--spacing-lg);
+}
+
+.stat-item {
+    background-color: white;
+    border-radius: var(--border-radius);
+    padding: var(--spacing-md);
+    text-align: center;
+    box-shadow: var(--shadow-sm);
+}
+
+/* Status indicators */
+.status-indicator {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: var(--spacing-xs);
+}
+
+.status-positive {
+    background-color: #4CAF50;
+}
+
+.status-warning {
+    background-color: #FFC107;
+}
+
+.status-negative {
+    background-color: #F44336;
+}
+
+/* Clean up sidebar */
+[data-testid="stSidebar"] {
+    background-color: white;
+    padding-top: var(--spacing-lg);
+}
+
+[data-testid="stSidebar"] > div:first-child {
+    padding-top: var(--spacing-xl);
+}
+
+/* Enhance app header */
+header {
+    background-color: white;
+    box-shadow: var(--shadow-sm);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .stat-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    h1 {
+        font-size: 1.8rem;
+    }
+    
+    h2 {
+        font-size: 1.5rem;
+    }
+    
+    h3 {
+        font-size: 1.25rem;
+    }
+}
