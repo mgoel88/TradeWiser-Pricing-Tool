@@ -510,46 +510,117 @@ elif page == "Quality Analysis":
     
     elif analysis_method == "Upload Sample Images":
         st.subheader("Upload Sample Images")
-        st.write("Upload images of your commodity samples for quality analysis.")
+        st.write("Upload images of your commodity samples for AI-powered quality analysis.")
         
-        commodities = fetch_commodity_list()
-        selected_commodity = st.selectbox(
-            "Select Commodity Type", 
-            commodities,
-            index=0 if commodities else None,
-            key="image_commodity_select"
-        )
+        # Set up columns for options
+        col1, col2 = st.columns(2)
         
+        with col1:
+            commodities = fetch_commodity_list()
+            selected_commodity = st.selectbox(
+                "Select Commodity Type", 
+                commodities,
+                index=0 if commodities else None,
+                key="image_commodity_select"
+            )
+            
+            use_ai = st.checkbox("Use AI Vision for Analysis", value=True,
+                                help="Enable OpenAI's Vision AI to analyze images. If disabled, traditional methods will be used.")
+        
+        with col2:
+            # Analysis type selection
+            analysis_type = st.selectbox(
+                "Analysis Detail Level",
+                ["general", "detailed", "defects", "grading"],
+                index=1,  # default to detailed
+                format_func=lambda x: {
+                    "general": "General Quality (Basic)",
+                    "detailed": "Detailed Parameters (Standard)",
+                    "defects": "Defect Detection (Advanced)",
+                    "grading": "Standard Grading (Premium)"
+                }[x],
+                help="Select the level of detail for the analysis. More detailed analysis may take longer."
+            )
+            
+            # Image display options
+            image_display = st.radio(
+                "Display Images",
+                ["Show All", "Hide Images", "Show Only First"],
+                index=2,
+                horizontal=True
+            )
+        
+        # File uploader
         uploaded_files = st.file_uploader(
             "Upload one or more sample images", 
             type=["jpg", "jpeg", "png"], 
-            accept_multiple_files=True
+            accept_multiple_files=True,
+            help="Upload clear, well-lit images of the commodity samples. Multiple samples help improve accuracy."
         )
         
         if uploaded_files and selected_commodity:
-            st.info("Analyzing images... This may take a moment.")
-            
-            # Process and analyze each image
-            all_results = []
-            
-            for i, file in enumerate(uploaded_files):
-                quality_params = analyze_quality_from_image(file, selected_commodity)
+            with st.spinner("Analyzing images with AI... This may take a moment."):
+                # Process and analyze each image
+                all_results = []
                 
-                if quality_params:
-                    all_results.append(quality_params)
+                for i, file in enumerate(uploaded_files):
+                    # Use AI analysis if enabled
+                    quality_params = analyze_quality_from_image(file, selected_commodity, use_ai=use_ai, analysis_type=analysis_type)
                     
-                    st.subheader(f"Sample {i+1} Analysis")
-                    
-                    # Display image
-                    st.image(file, caption=f"Sample {i+1}", width=300)
-                    
-                    # Display extracted parameters
-                    params_df = pd.DataFrame({
-                        'Parameter': list(quality_params.keys()),
-                        'Value': list(quality_params.values())
-                    })
-                    
-                    st.dataframe(params_df, use_container_width=True)
+                    if quality_params:
+                        all_results.append(quality_params)
+                        
+                        # Determine if we should display this image
+                        show_image = (
+                            image_display == "Show All" or 
+                            (image_display == "Show Only First" and i == 0)
+                        )
+                        
+                        if show_image:
+                            st.subheader(f"Sample {i+1} Analysis")
+                            
+                            # Create columns for image and data
+                            img_col, data_col = st.columns([1, 2])
+                            
+                            with img_col:
+                                # Display image
+                                st.image(file, caption=f"Sample {i+1}", width=250)
+                            
+                            with data_col:
+                                # Display extracted parameters
+                                # Filter out non-numeric values and AI metadata for the table view
+                                numeric_params = {k: v for k, v in quality_params.items() 
+                                                if isinstance(v, (int, float)) and k != "timestamp" and not k.startswith("ai_")}
+                                
+                                params_df = pd.DataFrame({
+                                    'Parameter': list(numeric_params.keys()),
+                                    'Value': list(numeric_params.values())
+                                })
+                                
+                                st.dataframe(params_df, use_container_width=True)
+                                
+                                # Show AI summary if available
+                                if "ai_summary" in quality_params:
+                                    st.write("**AI Analysis:**", quality_params["ai_summary"])
+                                
+                                # Show confidence level if available
+                                if "confidence" in quality_params:
+                                    confidence = quality_params["confidence"]
+                                    st.progress(confidence, text=f"Confidence: {confidence:.2f}")
+                                
+                                # Display quality grade if available
+                                if "quality_grade" in quality_params:
+                                    grade = quality_params["quality_grade"]
+                                    if isinstance(grade, str):
+                                        grade_colors = {
+                                            "Excellent": "green",
+                                            "Good": "lightgreen",
+                                            "Average": "orange",
+                                            "Below Average": "darkorange",
+                                            "Poor": "red"
+                                        }
+                                        color = grade_colors.get(grade, "blue")
+                                        st.markdown(f"**Quality Grade:** <span style='color:{color};font-weight:bold'>{grade}</span>", unsafe_allow_html=True)
             
             if all_results:
                 # Calculate average quality parameters

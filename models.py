@@ -222,15 +222,15 @@ def predict_price_trend(commodity, region, days=30):
         'std': prediction_std
     }
 
-def assess_quality_parameters(commodity, image_data=None, lab_report=None):
+def assess_quality_parameters(commodity, image_data=None, lab_report=None, use_ai=True):
     """
     Assess quality parameters from image data or lab report.
-    This is a placeholder for a model that would analyze images or reports.
     
     Args:
         commodity (str): The commodity
         image_data (bytes, optional): Image data for analysis
         lab_report (dict, optional): Lab report data
+        use_ai (bool): Whether to use AI models for analysis when available
         
     Returns:
         dict: Assessed quality parameters
@@ -244,10 +244,65 @@ def assess_quality_parameters(commodity, image_data=None, lab_report=None):
         logger.warning(f"No quality parameters found for commodity: {commodity}")
         return {}
     
-    # In a real implementation, this would use computer vision models
-    # or document parsing to extract quality parameters
-    # For now, return random but realistic values
+    # Try to use AI vision module if image data is provided
+    if image_data and use_ai:
+        try:
+            # Import AI vision module
+            from ai_vision import analyze_commodity_image, extract_quality_parameters
+            
+            # Create a temporary file to store the image
+            import tempfile
+            import os
+            
+            # Create temp file
+            fd, temp_path = tempfile.mkstemp(suffix='.jpg')
+            os.close(fd)
+            
+            # Write image data to temp file
+            with open(temp_path, 'wb') as f:
+                f.write(image_data)
+            
+            # Analyze the image using AI
+            result = analyze_commodity_image(temp_path, commodity, analysis_type="detailed")
+            
+            # Clean up temp file
+            os.unlink(temp_path)
+            
+            if result["status"] == "success":
+                # Extract parameters
+                ai_quality_params = extract_quality_parameters(result, commodity)
+                
+                # Validate parameters against commodity data
+                validated_params = {}
+                
+                for param, value in ai_quality_params.items():
+                    if param in commodity_data['quality_parameters']:
+                        param_data = commodity_data['quality_parameters'][param]
+                        min_val = param_data.get('min', 0)
+                        max_val = param_data.get('max', 100)
+                        
+                        # Ensure value is a number and within range
+                        if isinstance(value, (int, float)):
+                            value = max(min_val, min(max_val, value))
+                            validated_params[param] = round(value, 2)
+                    else:
+                        # Include other parameters that might be useful
+                        if isinstance(value, (int, float)):
+                            validated_params[param] = value
+                
+                # Include AI summary if available
+                if "ai_summary" in ai_quality_params:
+                    validated_params["ai_summary"] = ai_quality_params["ai_summary"]
+                
+                if validated_params:
+                    return validated_params
+                
+            logger.warning("AI analysis did not produce valid parameters, falling back to traditional method")
+        except Exception as e:
+            logger.error(f"Error in AI analysis: {e}")
+            logger.warning("Error in AI quality assessment, falling back to traditional method")
     
+    # Fallback method: generate parameters based on commodity data ranges
     quality_params = {}
     
     for param, details in commodity_data['quality_parameters'].items():
