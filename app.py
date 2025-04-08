@@ -75,7 +75,7 @@ except Exception as e:
 # Sidebar for navigation
 st.sidebar.title("Navigation")
 page = st.sidebar.radio("Select a page:", 
-    ["Price Dashboard", "Quality Analysis", "Market Trends", "WIZX Index", "Transportation Calculator", "Batch Calculator", "Data Submission", "Data Explorer", "Data Cleaning"])
+    ["Price Dashboard", "Price Forecasting", "Quality Analysis", "Market Trends", "WIZX Index", "Transportation Calculator", "Batch Calculator", "Data Submission", "Data Explorer", "Data Cleaning"])
 
 # Main content based on selected page
 if page == "Price Dashboard":
@@ -294,6 +294,79 @@ if page == "Price Dashboard":
                 st.info("Insufficient data for price prediction")
         else:
             st.info("No price history data available for the selected commodity and region")
+
+elif page == "Price Forecasting":
+    st.header("Price Forecasting Dashboard")
+    
+    # Get commodity and region selection
+    commodities = fetch_commodity_list()
+    selected_commodity = st.selectbox("Select Commodity", commodities)
+    
+    if selected_commodity:
+        regions = get_regions(selected_commodity)
+        selected_region = st.selectbox("Select Region", regions)
+        
+        if selected_region:
+            from price_forecasting import train_forecast_model, analyze_seasonality
+            
+            # Get historical data
+            history_days = 365
+            price_history = get_price_history(selected_commodity, selected_region, history_days)
+            
+            if price_history:
+                # Display historical trend
+                st.subheader("Historical Price Trend")
+                fig = create_price_trend_chart(price_history)
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # ML-based forecast
+                st.subheader("Price Forecast (Next 30 Days)")
+                forecast = train_forecast_model(price_history)
+                
+                forecast_df = pd.DataFrame({
+                    'Date': forecast['dates'],
+                    'Predicted Price': forecast['predictions']
+                })
+                
+                fig = px.line(forecast_df, x='Date', y='Predicted Price',
+                            title=f"Price Forecast for {selected_commodity} in {selected_region}")
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Seasonal Analysis
+                st.subheader("Seasonal Analysis")
+                seasonal_patterns = analyze_seasonality(price_history)
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # Monthly patterns
+                    monthly_df = pd.DataFrame({
+                        'Month': range(1, 13),
+                        'Average Price': seasonal_patterns['monthly_avg']
+                    })
+                    fig = px.line(monthly_df, x='Month', y='Average Price',
+                                title="Monthly Price Patterns")
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                with col2:
+                    # Quarterly patterns
+                    quarterly_df = pd.DataFrame({
+                        'Quarter': range(1, 5),
+                        'Average Price': seasonal_patterns['quarterly_avg']
+                    })
+                    fig = px.bar(quarterly_df, x='Quarter', y='Average Price',
+                                title="Quarterly Price Patterns")
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                # Price Statistics
+                st.subheader("Price Statistics")
+                stats_df = pd.DataFrame([{
+                    'Current Price': forecast['last_price'],
+                    'Predicted Price (30d)': forecast['predictions'][-1],
+                    'Price Change': ((forecast['predictions'][-1] - forecast['last_price']) / forecast['last_price'] * 100)
+                }])
+                
+                st.dataframe(stats_df, use_container_width=True)
 
 elif page == "Quality Analysis":
     st.header("Quality Analysis")
