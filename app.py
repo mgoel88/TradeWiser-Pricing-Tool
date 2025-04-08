@@ -2931,12 +2931,71 @@ elif page == "Data Explorer":
     elif data_type == "Regional Data":
         st.subheader("Explore Regional Data")
         
-        # Filters
-        regions = st.multiselect(
-            "Select Regions",
-            ["North India", "South India", "East India", "West India", "Central India"],
-            default=["North India"]
+        from map_visualization import (
+            create_regional_price_map,
+            create_price_heatmap,
+            create_price_spread_analysis
         )
+        
+        # Filters
+        commodities = fetch_commodity_list()
+        selected_commodity = st.selectbox(
+            "Select Commodity",
+            commodities,
+            index=0 if commodities else None,
+            key="map_commodity"
+        )
+        
+        if selected_commodity:
+            # Get current prices for all regions
+            all_regions = ["North India", "South India", "East India", "West India", "Central India"]
+            prices_by_region = {}
+            
+            for region in all_regions:
+                price_data = get_price_history(
+                    selected_commodity,
+                    region,
+                    days=1  # Get most recent price
+                )
+                if price_data and len(price_data) > 0:
+                    prices_by_region[region] = price_data[-1]['price']
+                else:
+                    # Use placeholder price if no data available
+                    prices_by_region[region] = None
+            
+            # Filter out regions with no data
+            prices_by_region = {k: v for k, v in prices_by_region.items() if v is not None}
+            
+            if prices_by_region:
+                # Create tabs for different visualizations
+                tab1, tab2, tab3 = st.tabs(["Regional Map", "Price Heatmap", "Price Spread"])
+                
+                with tab1:
+                    st.subheader("Interactive Regional Price Map")
+                    fig = create_regional_price_map(prices_by_region, selected_commodity)
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                with tab2:
+                    st.subheader("Price Heatmap")
+                    fig = create_price_heatmap(prices_by_region, selected_commodity)
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                with tab3:
+                    st.subheader("Price Spread Analysis")
+                    fig = create_price_spread_analysis(prices_by_region, selected_commodity)
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Display summary statistics
+                    st.subheader("Regional Price Summary")
+                    summary_df = pd.DataFrame({
+                        "Region": list(prices_by_region.keys()),
+                        "Price (₹/Quintal)": list(prices_by_region.values())
+                    })
+                    st.dataframe(summary_df, use_container_width=True)
+            else:
+                st.info("No price data available for the selected commodity.")
+        else:
+            st.info("Please select a commodity to view regional data.")
         
         if regions:
             # Commodities by region
