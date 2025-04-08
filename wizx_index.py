@@ -1,21 +1,17 @@
 """
-WIZX Index module for calculating and analyzing commodity price indices.
+WIZX Index module for agricultural commodity price index calculation.
 
-The WIZX Index is a standardized commodity price index similar to price
-indices like SENSEX, NYMEX, etc. It provides a reliable benchmark for
-tracking agricultural commodity prices across different regions and qualities.
+The WIZX Index is a composite measure of agricultural commodity prices 
+that provides a consistent basis for tracking market trends.
 """
 
 import os
+import json
 import logging
-import numpy as np
-import pandas as pd
 from datetime import datetime, date, timedelta
 
-from database_sql import (
-    Session, Commodity, Region, PricePoint, WIZXIndex,
-    get_commodity_data, calculate_wizx_index, get_wizx_indices
-)
+# Database imports
+from database_sql import calculate_wizx_index, get_commodity_index_data, get_all_commodities
 
 # Configure logging
 logging.basicConfig(
@@ -24,524 +20,365 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Constants
-DATA_DIR = "./data"
-WIZX_DATA_DIR = os.path.join(DATA_DIR, "wizx_indices")
 
-# Ensure directories exist
-if not os.path.exists(DATA_DIR):
-    os.makedirs(DATA_DIR)
-if not os.path.exists(WIZX_DATA_DIR):
-    os.makedirs(WIZX_DATA_DIR)
-
-
-def calculate_all_indices(date_val=None):
+def calculate_composite_index(days=30):
     """
-    Calculate WIZX indices for all commodities.
+    Calculate the composite index value for all commodities.
     
     Args:
-        date_val (date, optional): The date for calculation
+        days (int): Number of days of historical data to include
         
     Returns:
-        dict: Results of index calculations
+        dict: Composite index information
     """
-    if date_val is None:
-        date_val = date.today()
-    
-    session = Session()
-    
     try:
-        # Get all commodities
-        commodities = session.query(Commodity).all()
+        # Get the composite index data
+        index_data = get_wizx_index()
         
-        if not commodities:
-            logger.warning("No commodities found in database")
-            return {"success": False, "message": "No commodities found"}
+        if not index_data:
+            logger.warning("Failed to retrieve composite index data")
+            return {"success": False, "error": "No data available"}
         
-        results = {
-            "date": date_val,
-            "indices": {},
-            "success_count": 0,
-            "failed_count": 0
-        }
+        current_value = index_data.get("current_value", 1000)
+        change_percentage = index_data.get("change_percentage", 0)
         
-        for commodity in commodities:
-            try:
-                # Calculate index
-                index_result = calculate_wizx_index(commodity.name, date_val)
-                
-                if index_result:
-                    results["indices"][commodity.name] = index_result
-                    results["success_count"] += 1
-                else:
-                    logger.warning(f"Failed to calculate WIZX index for {commodity.name}")
-                    results["failed_count"] += 1
-                    results["indices"][commodity.name] = {"error": "Insufficient data"}
-            except Exception as e:
-                logger.error(f"Error calculating WIZX index for {commodity.name}: {e}")
-                results["failed_count"] += 1
-                results["indices"][commodity.name] = {"error": str(e)}
+        # Get previous value
+        history = index_data.get("history", [])
+        previous_value = current_value
         
-        return results
-        
-    except Exception as e:
-        logger.error(f"Error calculating all indices: {e}")
-        return {"success": False, "message": str(e)}
-    finally:
-        session.close()
-
-
-def calculate_composite_index(commodity_weights=None, date_val=None, name="WIZX-Composite"):
-    """
-    Calculate a composite WIZX index across multiple commodities.
-    
-    Args:
-        commodity_weights (dict, optional): Commodity weights {commodity_name: weight}
-        date_val (date, optional): The date for calculation
-        name (str): Name of the composite index
-        
-    Returns:
-        dict: Composite index data
-    """
-    if date_val is None:
-        date_val = date.today()
-    
-    session = Session()
-    
-    try:
-        # Get all indices for the date
-        indices = session.query(WIZXIndex).\
-            join(Commodity).\
-            filter(WIZXIndex.date == date_val).\
-            all()
-        
-        if not indices:
-            logger.warning(f"No indices found for date {date_val}")
-            return {"success": False, "message": f"No indices found for date {date_val}"}
-        
-        # If weights not provided, use equal weighting
-        if not commodity_weights:
-            commodity_weights = {}
-            for idx in indices:
-                commodity_name = session.query(Commodity.name).filter(Commodity.id == idx.commodity_id).scalar()
-                commodity_weights[commodity_name] = 1.0 / len(indices)
-        
-        # Validate weights
-        valid_commodities = [
-            session.query(Commodity.name).filter(Commodity.id == idx.commodity_id).scalar()
-            for idx in indices
-        ]
-        
-        for commodity in list(commodity_weights.keys()):
-            if commodity not in valid_commodities:
-                del commodity_weights[commodity]
-                logger.warning(f"Removed invalid commodity from weights: {commodity}")
-        
-        if not commodity_weights:
-            logger.warning("No valid commodity weights")
-            return {"success": False, "message": "No valid commodity weights"}
-        
-        # Normalize weights
-        total_weight = sum(commodity_weights.values())
-        normalized_weights = {k: v / total_weight for k, v in commodity_weights.items()}
-        
-        # Calculate weighted sum
-        composite_value = 0
-        components = {}
-        
-        for idx in indices:
-            commodity_name = session.query(Commodity.name).filter(Commodity.id == idx.commodity_id).scalar()
-            
-            if commodity_name in normalized_weights:
-                weight = normalized_weights[commodity_name]
-                composite_value += idx.index_value * weight
-                
-                components[commodity_name] = {
-                    "index_value": idx.index_value,
-                    "weight": weight,
-                    "weighted_value": idx.index_value * weight
-                }
-        
-        # Get previous composite value
-        previous_date = date_val - timedelta(days=1)
-        previous_composite = session.query(pd.DataFrame).filter(
-            pd.DataFrame.name == name,
-            pd.DataFrame.date == previous_date
-        ).first()
-        
-        previous_value = 1000.0
-        if previous_composite:
-            previous_value = previous_composite.value
-        
-        # Calculate change
-        change = composite_value - previous_value
-        change_percentage = (change / previous_value) * 100 if previous_value else 0
-        
-        # Save to file
-        file_path = os.path.join(WIZX_DATA_DIR, f"{name}_{date_val}.json")
-        
-        pd.DataFrame({
-            "name": name,
-            "date": date_val,
-            "value": composite_value,
-            "previous_value": previous_value,
-            "change": change,
-            "change_percentage": change_percentage,
-            "components": components,
-            "weights": normalized_weights
-        }).to_json(file_path, orient="records", lines=True)
+        if len(history) > 1:
+            previous_value = history[-2].get("value", current_value)
         
         return {
             "success": True,
-            "name": name,
-            "date": date_val,
-            "value": composite_value,
+            "value": current_value,
             "previous_value": previous_value,
-            "change": change,
-            "change_percentage": change_percentage,
-            "components": components
+            "change_percentage": change_percentage
         }
         
     except Exception as e:
         logger.error(f"Error calculating composite index: {e}")
-        return {"success": False, "message": str(e)}
-    finally:
-        session.close()
+        return {"success": False, "error": str(e)}
 
 
-def get_sector_indices(sector_definitions=None, date_val=None):
+def calculate_all_indices():
     """
-    Calculate sector-specific WIZX indices.
+    Calculate indices for all commodities.
     
-    Args:
-        sector_definitions (dict, optional): Sector definitions {sector_name: [commodity_list]}
-        date_val (date, optional): The date for calculation
-        
     Returns:
-        dict: Sector indices
+        dict: Dictionary of commodity indices
     """
-    if date_val is None:
-        date_val = date.today()
-    
-    # Default sectors if not provided
-    if not sector_definitions:
-        sector_definitions = {
-            "WIZX-Cereals": ["Wheat", "Rice", "Maize"],
-            "WIZX-Pulses": ["Tur Dal", "Moong Dal", "Urad Dal", "Chana Dal"],
-            "WIZX-Oilseeds": ["Soyabean", "Mustard", "Groundnut", "Sunflower"]
-        }
-    
-    results = {}
-    
-    for sector_name, commodities in sector_definitions.items():
-        # Create weight dictionary with equal weights
-        weights = {commodity: 1.0 / len(commodities) for commodity in commodities}
-        
-        # Calculate composite index for this sector
-        sector_index = calculate_composite_index(
-            commodity_weights=weights,
-            date_val=date_val,
-            name=sector_name
-        )
-        
-        results[sector_name] = sector_index
-    
-    return {
-        "date": date_val,
-        "sector_indices": results
-    }
-
-
-def historical_index_performance(commodity, days=365):
-    """
-    Get historical performance of a WIZX index.
-    
-    Args:
-        commodity (str): Commodity name or 'Composite' for composite index
-        days (int): Number of days of history
-        
-    Returns:
-        dict: Historical performance data
-    """
-    end_date = date.today()
-    start_date = end_date - timedelta(days=days)
-    
-    # Get indices data
-    if commodity == "Composite" or commodity.startswith("WIZX-"):
-        # Load composite index data from files
-        index_files = [f for f in os.listdir(WIZX_DATA_DIR) if f.startswith(commodity) and f.endswith(".json")]
-        
-        indices = []
-        for file_name in index_files:
-            file_path = os.path.join(WIZX_DATA_DIR, file_name)
-            try:
-                data = pd.read_json(file_path, lines=True)
-                if data:
-                    indices.append(data)
-            except Exception as e:
-                logger.error(f"Error reading index file {file_name}: {e}")
-        
-        if not indices:
-            return {"success": False, "message": f"No historical data found for {commodity}"}
-        
-        # Convert to DataFrame
-        df = pd.concat(indices)
-        
-        # Filter by date range
-        df = df[(df['date'] >= start_date) & (df['date'] <= end_date)]
-        
-        if df.empty:
-            return {"success": False, "message": f"No data found for {commodity} in date range"}
-        
-        # Sort by date
-        df = df.sort_values('date')
-        
-        # Calculate periodic returns
-        periodic_returns = {
-            "last_day": df['change_percentage'].iloc[-1] if len(df) > 1 else None,
-            "last_week": calculate_return(df, 7),
-            "last_month": calculate_return(df, 30),
-            "last_quarter": calculate_return(df, 90),
-            "last_year": calculate_return(df, 365)
-        }
-        
-        # Calculate volatility
-        if len(df) >= 30:
-            volatility = df['change_percentage'].std()
-        else:
-            volatility = None
-        
-        return {
-            "success": True,
-            "commodity": commodity,
-            "start_date": start_date,
-            "end_date": end_date,
-            "current_value": df['value'].iloc[-1],
-            "periodic_returns": periodic_returns,
-            "volatility": volatility,
-            "min_value": df['value'].min(),
-            "max_value": df['value'].max(),
-            "values": df[['date', 'value', 'change_percentage']].to_dict('records')
-        }
-        
-    else:
-        # Get commodity WIZX indices
-        indices = get_wizx_indices(commodity, start_date, end_date)
-        
-        if not indices or commodity not in indices:
-            return {"success": False, "message": f"No historical data found for {commodity}"}
-        
-        # Convert to DataFrame
-        df = pd.DataFrame(indices[commodity])
-        
-        # Sort by date
-        df = df.sort_values('date')
-        
-        # Calculate periodic returns
-        periodic_returns = {
-            "last_day": df['change_percentage'].iloc[-1] if len(df) > 1 else None,
-            "last_week": calculate_return(df, 7),
-            "last_month": calculate_return(df, 30),
-            "last_quarter": calculate_return(df, 90),
-            "last_year": calculate_return(df, 365)
-        }
-        
-        # Calculate volatility
-        if len(df) >= 30:
-            volatility = df['change_percentage'].std()
-        else:
-            volatility = None
-        
-        return {
-            "success": True,
-            "commodity": commodity,
-            "start_date": start_date,
-            "end_date": end_date,
-            "current_value": df['index_value'].iloc[-1],
-            "periodic_returns": periodic_returns,
-            "volatility": volatility,
-            "min_value": df['index_value'].min(),
-            "max_value": df['index_value'].max(),
-            "values": df.to_dict('records')
-        }
-
-
-def calculate_return(df, days):
-    """
-    Calculate return over a period.
-    
-    Args:
-        df (DataFrame): DataFrame with price data
-        days (int): Number of days
-        
-    Returns:
-        float: Return percentage
-    """
-    if len(df) <= 1:
-        return None
-    
-    last_value = df['value'].iloc[-1]
-    
-    # Find closest value 'days' days ago
-    if len(df) >= days:
-        previous_value = df['value'].iloc[-days]
-    else:
-        previous_value = df['value'].iloc[0]
-    
-    if previous_value == 0:
-        return None
-    
-    return (last_value - previous_value) / previous_value * 100
-
-
-def compare_indices(commodities, days=30):
-    """
-    Compare multiple WIZX indices.
-    
-    Args:
-        commodities (list): List of commodity names to compare
-        days (int): Number of days to compare
-        
-    Returns:
-        dict: Comparison data
-    """
-    end_date = date.today()
-    start_date = end_date - timedelta(days=days)
-    
-    results = {
-        "start_date": start_date,
-        "end_date": end_date,
-        "commodities": {},
-        "correlation_matrix": None
-    }
-    
-    # Get data for each commodity
-    all_data = {}
-    
-    for commodity in commodities:
-        performance = historical_index_performance(commodity, days)
-        
-        if performance["success"]:
-            results["commodities"][commodity] = {
-                "current_value": performance["current_value"],
-                "periodic_returns": performance["periodic_returns"],
-                "volatility": performance["volatility"]
-            }
-            
-            # Extract time series for correlation calculation
-            if 'values' in performance:
-                if commodity.startswith("WIZX-") or commodity == "Composite":
-                    df = pd.DataFrame(performance["values"])
-                    all_data[commodity] = df.set_index('date')['value']
-                else:
-                    df = pd.DataFrame(performance["values"])
-                    all_data[commodity] = df.set_index('date')['index_value']
-        else:
-            results["commodities"][commodity] = {"error": performance["message"]}
-    
-    # Calculate correlation matrix
-    if len(all_data) >= 2:
-        df = pd.DataFrame(all_data)
-        results["correlation_matrix"] = df.corr().to_dict()
-    
-    return results
-
-
-def export_indices(start_date=None, end_date=None, commodities=None, file_path=None):
-    """
-    Export WIZX indices to a CSV file.
-    
-    Args:
-        start_date (date, optional): Start date
-        end_date (date, optional): End date
-        commodities (list, optional): List of commodities to export
-        file_path (str, optional): Output file path
-        
-    Returns:
-        dict: Export results
-    """
-    if end_date is None:
-        end_date = date.today()
-    
-    if start_date is None:
-        start_date = end_date - timedelta(days=30)
-    
-    # Get data
-    if commodities:
-        # Get specific commodities
-        all_indices = {}
-        for commodity in commodities:
-            if commodity.startswith("WIZX-") or commodity == "Composite":
-                performance = historical_index_performance(commodity, (end_date - start_date).days)
-                if performance["success"]:
-                    all_indices[commodity] = performance["values"]
-            else:
-                indices = get_wizx_indices(commodity, start_date, end_date)
-                if indices and commodity in indices:
-                    all_indices[commodity] = indices[commodity]
-    else:
+    try:
         # Get all commodities
-        indices = get_wizx_indices(None, start_date, end_date)
-        all_indices = indices
+        commodities = get_all_commodities()
+        results = {}
         
-        # Add composite indices
-        for index_name in ["WIZX-Composite", "WIZX-Cereals", "WIZX-Pulses", "WIZX-Oilseeds"]:
-            performance = historical_index_performance(index_name, (end_date - start_date).days)
-            if performance["success"]:
-                all_indices[index_name] = performance["values"]
-    
-    if not all_indices:
-        return {"success": False, "message": "No indices found for the specified parameters"}
-    
-    # Convert to DataFrames and merge
-    merged_data = None
-    
-    for commodity, values in all_indices.items():
-        df = pd.DataFrame(values)
+        # Calculate index for each commodity
+        for commodity in commodities:
+            index_data = get_wizx_index(commodity)
+            
+            if index_data:
+                results[commodity] = {
+                    "current_value": index_data.get("current_value", 1000),
+                    "change_percentage": index_data.get("change_percentage", 0)
+                }
         
-        if isinstance(df, pd.DataFrame) and not df.empty:
-            # Rename columns to include commodity
-            value_column = 'value' if 'value' in df.columns else 'index_value'
-            change_column = 'change_percentage' if 'change_percentage' in df.columns else None
+        return results
+    
+    except Exception as e:
+        logger.error(f"Error calculating all indices: {e}")
+        return {}
+
+
+def get_wizx_index(commodity=None):
+    """
+    Get the WIZX index data for a specific commodity or the composite index.
+    
+    Args:
+        commodity (str, optional): The commodity name. If None, returns the composite index.
+        
+    Returns:
+        dict: WIZX index data
+    """
+    try:
+        # If a specific commodity is requested
+        if commodity:
+            return get_commodity_index_data(commodity)
+        
+        # Otherwise, construct a composite index
+        # Get data for all commodities
+        commodities = get_all_commodities()
+        all_indices = []
+        
+        for comm in commodities:
+            index_data = get_commodity_index_data(comm)
+            if index_data:
+                all_indices.append(index_data)
+        
+        # If we have no data, return a default structure
+        if not all_indices:
+            return {
+                "commodity": "Composite",
+                "current_value": 1000,
+                "change_percentage": 0,
+                "history": [
+                    {"date": date.today(), "value": 1000}
+                ]
+            }
+        
+        # Calculate composite index
+        # Start with an empty history dict
+        history_by_date = {}
+        
+        # For each commodity index
+        for idx in all_indices:
+            # Process each history point
+            for point in idx.get("history", []):
+                date_val = point.get("date")
+                value = point.get("value")
+                
+                if date_val and value:
+                    # Initialize if first time seeing this date
+                    if date_val not in history_by_date:
+                        history_by_date[date_val] = {
+                            "sum": 0,
+                            "count": 0
+                        }
+                    
+                    # Add this value to the sum for this date
+                    history_by_date[date_val]["sum"] += value
+                    history_by_date[date_val]["count"] += 1
+        
+        # Convert to list and calculate averages
+        composite_history = []
+        for date_val, data in sorted(history_by_date.items()):
+            if data["count"] > 0:
+                avg_value = data["sum"] / data["count"]
+                composite_history.append({
+                    "date": date_val,
+                    "value": avg_value
+                })
+        
+        # Calculate current value and change percentage
+        if composite_history:
+            current_value = composite_history[-1]["value"]
             
-            if value_column in df.columns:
-                df.rename(columns={value_column: f"{commodity}_{value_column}"}, inplace=True)
-            
-            if change_column and change_column in df.columns:
-                df.rename(columns={change_column: f"{commodity}_{change_column}"}, inplace=True)
-            
-            # Set date as index
-            if 'date' in df.columns:
-                df.set_index('date', inplace=True)
-            
-            # Merge with existing data
-            if merged_data is None:
-                merged_data = df
+            # Calculate change percentage
+            if len(composite_history) > 1:
+                prev_value = composite_history[-2]["value"]
+                change_percentage = ((current_value - prev_value) / prev_value) * 100
             else:
-                merged_data = pd.merge(merged_data, df, left_index=True, right_index=True, how='outer')
+                change_percentage = 0
+        else:
+            current_value = 1000
+            change_percentage = 0
+        
+        # Return the composite index
+        return {
+            "commodity": "Composite",
+            "current_value": current_value,
+            "change_percentage": change_percentage,
+            "history": composite_history
+        }
+        
+    except Exception as e:
+        logger.error(f"Error retrieving WIZX index: {e}")
+        
+        # Return a default structure in case of error
+        return {
+            "commodity": commodity or "Composite",
+            "current_value": 1000,
+            "change_percentage": 0,
+            "history": [
+                {"date": date.today(), "value": 1000}
+            ]
+        }
+
+
+def update_wizx_indices(date_val=None):
+    """
+    Update the WIZX indices for all commodities.
     
-    if merged_data is None or merged_data.empty:
-        return {"success": False, "message": "No valid data to export"}
+    Args:
+        date_val (date, optional): The date to calculate indices for. Defaults to today.
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        # Default to today if no date provided
+        if date_val is None:
+            date_val = date.today()
+        
+        logger.info(f"Updating WIZX indices for {date_val}")
+        
+        # Get all commodities
+        commodities = get_all_commodities()
+        
+        # Calculate index for each commodity
+        success_count = 0
+        
+        for commodity in commodities:
+            result = calculate_wizx_index(commodity, date_val)
+            
+            if result:
+                success_count += 1
+                logger.info(f"Updated WIZX index for {commodity}: {result['index_value']:.2f}")
+            else:
+                logger.warning(f"Failed to update WIZX index for {commodity}")
+        
+        logger.info(f"WIZX index update complete. Updated {success_count} out of {len(commodities)} commodities.")
+        
+        return success_count > 0
+        
+    except Exception as e:
+        logger.error(f"Error updating WIZX indices: {e}")
+        return False
+
+
+def backfill_wizx_indices(start_date=None, end_date=None):
+    """
+    Backfill WIZX indices for a date range.
     
-    # Reset index to get date as column
-    merged_data.reset_index(inplace=True)
+    Args:
+        start_date (date, optional): Start date for backfill. Defaults to 30 days ago.
+        end_date (date, optional): End date for backfill. Defaults to yesterday.
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        # Default dates if not provided
+        if end_date is None:
+            end_date = date.today() - timedelta(days=1)
+        
+        if start_date is None:
+            start_date = end_date - timedelta(days=30)
+        
+        logger.info(f"Backfilling WIZX indices from {start_date} to {end_date}")
+        
+        # Get all commodities
+        commodities = get_all_commodities()
+        
+        # Calculate indices for each date and commodity
+        current_date = start_date
+        total_updates = 0
+        
+        while current_date <= end_date:
+            day_updates = 0
+            
+            for commodity in commodities:
+                result = calculate_wizx_index(commodity, current_date)
+                
+                if result:
+                    day_updates += 1
+            
+            logger.info(f"Backfilled {day_updates} indices for {current_date}")
+            total_updates += day_updates
+            
+            # Move to next day
+            current_date += timedelta(days=1)
+        
+        logger.info(f"WIZX index backfill complete. Updated {total_updates} indices.")
+        
+        return total_updates > 0
+        
+    except Exception as e:
+        logger.error(f"Error backfilling WIZX indices: {e}")
+        return False
+
+
+def get_wizx_index_statistics(commodity=None, days=30):
+    """
+    Get statistics for the WIZX index.
     
-    # Sort by date
-    merged_data.sort_values('date', inplace=True)
-    
-    # Generate file path if not provided
-    if file_path is None:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        file_path = os.path.join(WIZX_DATA_DIR, f"wizx_indices_{timestamp}.csv")
-    
-    # Export to CSV
-    merged_data.to_csv(file_path, index=False)
-    
-    return {
-        "success": True,
-        "file_path": file_path,
-        "commodities": list(all_indices.keys()),
-        "rows": len(merged_data),
-        "columns": len(merged_data.columns),
-        "date_range": [start_date, end_date]
-    }
+    Args:
+        commodity (str, optional): The commodity to get statistics for. If None, returns composite index stats.
+        days (int): Number of days of historical data to analyze
+        
+    Returns:
+        dict: Index statistics
+    """
+    try:
+        # Get index data
+        index_data = get_wizx_index(commodity)
+        
+        if not index_data:
+            return None
+        
+        # Filter history to requested number of days
+        history = index_data.get("history", [])
+        
+        if len(history) == 0:
+            return {
+                "commodity": commodity or "Composite",
+                "current_value": index_data.get("current_value", 1000),
+                "change_percentage": index_data.get("change_percentage", 0),
+                "min_value": index_data.get("current_value", 1000),
+                "max_value": index_data.get("current_value", 1000),
+                "avg_value": index_data.get("current_value", 1000),
+                "volatility": 0
+            }
+        
+        # Filter to last 'days' days
+        if len(history) > days:
+            history = history[-days:]
+        
+        # Extract values
+        values = [point.get("value", 0) for point in history]
+        
+        # Calculate statistics
+        min_value = min(values)
+        max_value = max(values)
+        avg_value = sum(values) / len(values)
+        
+        # Calculate volatility (standard deviation of daily percentage changes)
+        volatility = 0
+        if len(values) > 1:
+            daily_changes = []
+            for i in range(1, len(values)):
+                if values[i-1] > 0:
+                    daily_change = (values[i] - values[i-1]) / values[i-1] * 100
+                    daily_changes.append(daily_change)
+            
+            if daily_changes:
+                # Standard deviation calculation
+                mean = sum(daily_changes) / len(daily_changes)
+                variance = sum((x - mean) ** 2 for x in daily_changes) / len(daily_changes)
+                volatility = variance ** 0.5
+        
+        # Return statistics
+        return {
+            "commodity": commodity or "Composite",
+            "current_value": index_data.get("current_value", 1000),
+            "change_percentage": index_data.get("change_percentage", 0),
+            "min_value": min_value,
+            "max_value": max_value,
+            "avg_value": avg_value,
+            "volatility": volatility  # Daily percentage volatility
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting WIZX index statistics: {e}")
+        return None
+
+
+if __name__ == "__main__":
+    # Use this for testing or standalone operation
+    # Example: python wizx_index.py
+    try:
+        # Update today's indices
+        update_wizx_indices()
+        
+        # Print composite index
+        index_data = get_wizx_index()
+        if index_data:
+            print(f"Composite WIZX Index: {index_data['current_value']:.2f} ({index_data['change_percentage']:+.2f}%)")
+            
+            # Print the last 5 days
+            print("\nLast 5 days:")
+            for point in index_data.get("history", [])[-5:]:
+                print(f"{point['date']}: {point['value']:.2f}")
+        
+    except Exception as e:
+        logger.error(f"Error running WIZX index module: {e}")

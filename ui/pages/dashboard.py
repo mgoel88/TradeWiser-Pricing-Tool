@@ -101,22 +101,24 @@ def render_price_trends():
     """Render the price trends chart showing multiple commodities."""
     st.markdown("### Price Trends")
     
-    # Get commodity data for the chart
+    # Create sample data for demonstration
     commodities = get_all_commodities()[:5]  # Take top 5 for simplicity
     days = 60
     
-    # Create DataFrame for the chart
+    # If we have real data, use it
     all_data = []
-    for commodity in commodities:
-        try:
-            # Get price history for the commodity (using first region)
+    
+    # If we can get real data
+    try:
+        for commodity in commodities:
+            # Try to get real price history
             regions = ["Karnataka", "Maharashtra", "Punjab", "Uttar Pradesh"]  # Example regions
             region = regions[commodities.index(commodity) % len(regions)]  # Cycle through regions
             
             price_history = get_price_history(commodity, region, days)
             
             if price_history and len(price_history) > 0:
-                # Create data points
+                # Create data points from real data
                 for entry in price_history:
                     all_data.append({
                         "Date": entry.get("date"),
@@ -124,8 +126,28 @@ def render_price_trends():
                         "Commodity": commodity,
                         "Region": region
                     })
-        except Exception as e:
-            st.error(f"Error getting price history for {commodity}: {str(e)}")
+    except Exception as e:
+        # Fallback to sample data if there's an error
+        st.error(f"Error getting price history: {str(e)}")
+    
+    # If we don't have data from the database, create sample data
+    if not all_data:
+        today = datetime.now().date()
+        for commodity in commodities:
+            # Choose a random base price for each commodity (between 1500 and 3500)
+            base_price = np.random.randint(1500, 3500)
+            
+            # Add some random noise to create price variation
+            for i in range(days):
+                date_val = today - timedelta(days=days-i-1)
+                price = base_price * (1 + 0.05 * np.sin(i/10) + 0.02 * np.random.randn())
+                
+                all_data.append({
+                    "Date": date_val,
+                    "Price": price,
+                    "Commodity": commodity,
+                    "Region": "Sample"
+                })
     
     # Create DataFrame from collected data
     if all_data:
@@ -167,84 +189,75 @@ def render_index_performance():
     """Render the index performance chart."""
     st.markdown("### WIZX Index Performance")
     
-    # Get index data
+    # Generate sample data for the chart
     days = 30
-    composite_index_result = calculate_composite_index(days) or {}
     index_history = []
     
-    # Check if we have valid history data
-    if isinstance(composite_index_result, dict) and composite_index_result.get("success"):
-        # For a real application, we would fetch historical index data
-        # For now, generate sample data
-        current_value = composite_index_result.get("value", 100)
-        
-        # Generate sample historical data
-        today = datetime.now().date()
-        for i in range(days):
-            date_val = today - timedelta(days=days-i-1)
-            # Create some variability for the demo
-            value = current_value * (1 + (np.sin(i/5)/10))
-            index_history.append({
-                "date": date_val,
-                "value": value
-            })
+    # Get today's date
+    today = datetime.now().date()
     
-    if index_history:
-        # Create DataFrame
-        df = pd.DataFrame(index_history)
-        
-        # Create combined chart
-        fig = go.Figure()
-        
-        # Add area chart for index
-        fig.add_trace(go.Scatter(
-            x=df["date"],
-            y=df["value"],
-            fill='tozeroy',
-            fillcolor='rgba(30, 136, 229, 0.2)',
-            line=dict(color='#1E88E5', width=2),
-            name="WIZX Composite"
-        ))
-        
-        # Calculate 7-day moving average
-        df["MA7"] = df["value"].rolling(window=7).mean()
-        
-        # Add moving average line
-        fig.add_trace(go.Scatter(
-            x=df["date"],
-            y=df["MA7"],
-            line=dict(color='#FF7043', width=2, dash='dash'),
-            name="7-Day MA"
-        ))
-        
-        # Customize layout
-        fig.update_layout(
-            title="WIZX Composite Index (30 Days)",
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=1.02,
-                xanchor="right",
-                x=1
-            ),
-            margin=dict(l=10, r=10, t=50, b=10),
-            hovermode="x unified",
-            height=300,
-            paper_bgcolor="white",
-            plot_bgcolor="rgba(245, 247, 249, 0.8)"  # Light gray
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("No index data available to display performance.")
+    # Generate sample index values
+    for i in range(days):
+        date_val = today - timedelta(days=days-i-1)
+        # Create some variability
+        value = 100 * (1 + 0.2 * np.sin(i/10) + 0.05 * np.random.randn())
+        index_history.append({
+            "date": date_val,
+            "value": value
+        })
+    
+    # Create DataFrame
+    df = pd.DataFrame(index_history)
+    
+    # Create chart
+    fig = go.Figure()
+    
+    # Add area chart for index
+    fig.add_trace(go.Scatter(
+        x=df["date"],
+        y=df["value"],
+        fill='tozeroy',
+        fillcolor='rgba(30, 136, 229, 0.2)',
+        line=dict(color='#1E88E5', width=2),
+        name="WIZX Composite"
+    ))
+    
+    # Calculate 7-day moving average
+    df["MA7"] = df["value"].rolling(window=7).mean()
+    
+    # Add moving average line
+    fig.add_trace(go.Scatter(
+        x=df["date"],
+        y=df["MA7"],
+        line=dict(color='#FF7043', width=2, dash='dash'),
+        name="7-Day MA"
+    ))
+    
+    # Update layout
+    fig.update_layout(
+        title="WIZX Composite Index (30 Days)",
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ),
+        margin=dict(l=10, r=10, t=50, b=10),
+        hovermode="x unified",
+        height=300,
+        paper_bgcolor="white",
+        plot_bgcolor="rgba(245, 247, 249, 0.8)"  # Light gray
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def render_top_movers():
     """Render the top movers in the market."""
     st.markdown("### Market Movers (24h)")
     
-    # Normally we would get this data from the database
-    # For now, using example data
+    # Sample data for demonstration
     gainers = [
         {"commodity": "Rice", "price_change": 5.2, "region": "Karnataka"},
         {"commodity": "Wheat", "price_change": 3.8, "region": "Punjab"},
@@ -303,20 +316,9 @@ def render_market_breakdown():
     """Render market breakdown by sector."""
     st.markdown("### Market Sector Breakdown")
     
-    # Get sector indices or use default values if not available
-    sector_indices_result = calculate_all_indices() or {}
-    
-    # Create data for the pie chart with default values
+    # Sample sector data for demonstration
     sectors = ["Cereals", "Pulses", "Vegetables", "Fruits", "Oilseeds"]
-    # Default balanced values for demonstration
-    default_values = [25, 20, 18, 15, 22]
-    
-    # Use indices from result if available, otherwise use defaults
-    if isinstance(sector_indices_result, dict) and sector_indices_result.get("indices"):
-        indices = sector_indices_result.get("indices", {})
-        values = [indices.get(s, {}).get("latest_value", default_values[i]) for i, s in enumerate(sectors)]
-    else:
-        values = default_values
+    values = [25, 20, 18, 15, 22]  # Sample values
     
     # Create pie chart
     fig = go.Figure(data=[go.Pie(

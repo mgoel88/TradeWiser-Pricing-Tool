@@ -5,10 +5,9 @@ Quality analysis page for the WIZX application.
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import os
-from PIL import Image
+from datetime import datetime
 import io
-import tempfile
+from PIL import Image
 
 # Import components
 from ui.components.header import render_subheader
@@ -16,256 +15,278 @@ from ui.components.quality_analyzer_card import render_quality_analysis_card
 
 # Import backend functionality
 from database_sql import get_all_commodities
+from quality_analyzer import analyze_commodity_quality
 from ai_vision import analyze_commodity_image, save_uploaded_image
-from quality_analyzer import analyze_quality_from_image
-from pricing_engine import calculate_price
 
 
 def render():
     """Render the quality analysis page."""
     render_subheader(
-        title="Agricultural Quality Analysis",
-        description="Analyze commodity quality from images using advanced AI",
-        icon="microscope"
+        title="Commodity Quality Analysis",
+        description="Analyze commodity quality using AI-powered tools and image recognition",
+        icon="magnifying-glass"
     )
     
-    # Main content
-    render_image_analysis()
+    # Create tabs for different analysis methods
+    tabs = st.tabs(["Parameter-Based Analysis", "Image Analysis"])
+    
+    # Parameter-based analysis tab
+    with tabs[0]:
+        render_parameter_analysis()
+    
+    # Image-based analysis tab
+    with tabs[1]:
+        render_image_analysis()
+
+
+def render_parameter_analysis():
+    """Render the parameter-based quality analysis section."""
+    st.markdown("### Parameter-Based Quality Analysis")
+    
+    # Create layout with two columns
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        # Selection inputs
+        commodities = get_all_commodities()
+        if not commodities:
+            st.error("No commodities available. Please initialize the database first.")
+            return
+        
+        selected_commodity = st.selectbox(
+            "Select a Commodity",
+            commodities,
+            key="param_commodity"
+        )
+        
+        # Quality parameters input
+        st.markdown("#### Quality Parameters")
+        
+        # Set default quality parameters based on commodity
+        quality_params = {}
+        if selected_commodity == "Wheat":
+            quality_params = {
+                "protein_content": st.slider("Protein Content (%)", 8.0, 16.0, 12.5, 0.1, key="wheat_protein"),
+                "moisture_content": st.slider("Moisture Content (%)", 8.0, 15.0, 11.2, 0.1, key="wheat_moisture"),
+                "test_weight": st.slider("Test Weight (kg/hl)", 70.0, 85.0, 79.5, 0.1, key="wheat_test_weight"),
+                "damaged_kernels": st.slider("Damaged Kernels (%)", 0.0, 5.0, 0.8, 0.1, key="wheat_damaged")
+            }
+        elif selected_commodity == "Rice":
+            quality_params = {
+                "broken_percentage": st.slider("Broken Rice (%)", 0.0, 20.0, 7.2, 0.1, key="rice_broken"),
+                "moisture_content": st.slider("Moisture Content (%)", 8.0, 15.0, 12.0, 0.1, key="rice_moisture"),
+                "foreign_matter": st.slider("Foreign Matter (%)", 0.0, 3.0, 0.5, 0.1, key="rice_foreign"),
+                "head_rice_recovery": st.slider("Head Rice Recovery (%)", 60.0, 90.0, 78.0, 0.1, key="rice_head")
+            }
+        else:
+            # Generic parameters for other commodities
+            quality_params = {
+                "moisture_content": st.slider("Moisture Content (%)", 8.0, 15.0, 12.0, 0.1, key="gen_moisture"),
+                "foreign_matter": st.slider("Foreign Matter (%)", 0.0, 3.0, 0.8, 0.1, key="gen_foreign")
+            }
+        
+        # Add analyze button
+        analyze_button = st.button(
+            "Analyze Quality",
+            use_container_width=True,
+            type="primary",
+            key="param_analyze"
+        )
+    
+    # Results column
+    with col2:
+        st.markdown("### Analysis Results")
+        
+        if analyze_button:
+            # Call the quality analyzer
+            try:
+                analysis_result = analyze_commodity_quality(
+                    commodity=selected_commodity,
+                    quality_params=quality_params
+                )
+                
+                if analysis_result:
+                    # Extract overall score and grade
+                    quality_score = analysis_result.get("quality_score", 0)
+                    quality_grade = analysis_result.get("quality_grade", "C")
+                    
+                    # Display quality analysis card
+                    render_quality_analysis_card(
+                        commodity_name=selected_commodity,
+                        quality_params=quality_params,
+                        quality_score=quality_score,
+                        quality_grade=quality_grade
+                    )
+                    
+                    # Display additional analysis if available
+                    if "analysis_summary" in analysis_result:
+                        st.markdown("#### Analysis Summary")
+                        st.markdown(analysis_result["analysis_summary"])
+                else:
+                    st.error("Failed to analyze quality. Please try again.")
+            except Exception as e:
+                st.error(f"Error during quality analysis: {str(e)}")
+        else:
+            # Placeholder content when no analysis is performed
+            st.info(
+                """
+                Adjust the quality parameters and click 'Analyze Quality' to 
+                see a detailed analysis of the commodity quality.
+                """
+            )
 
 
 def render_image_analysis():
-    """Render the image analysis section."""
-    # Top panel - File upload and selection
-    st.markdown("### Upload Commodity Images")
+    """Render the image-based quality analysis section."""
+    st.markdown("### Image-Based Quality Analysis")
+    st.info("Upload an image of your commodity for AI-powered visual quality analysis.")
     
-    # Get list of commodities
-    commodities = get_all_commodities()
+    # Create layout with two columns
+    col1, col2 = st.columns([1, 1])
     
-    # Select commodity for analysis
-    selected_commodity = st.selectbox(
-        "Select Commodity",
-        options=commodities,
-        index=0 if commodities else None,
-        key="quality_analysis_commodity"
-    )
-    
-    # Analysis Method Selection
-    analysis_method = st.radio(
-        "Analysis Method",
-        options=["AI Vision (OpenAI)", "Computer Vision", "Manual Parameters"],
-        index=0,
-        horizontal=True,
-        key="analysis_method"
-    )
-    
-    # Analysis Type Selection
-    analysis_type = st.select_slider(
-        "Analysis Detail Level",
-        options=["General", "Detailed", "Defects", "Grading"],
-        value="Detailed",
-        key="analysis_type"
-    )
-    
-    # File upload
-    uploaded_files = st.file_uploader(
-        "Upload commodity images", 
-        type=["jpg", "jpeg", "png"], 
-        accept_multiple_files=True,
-        key="quality_images"
-    )
-    
-    # Use AI checkbox
-    use_ai = st.checkbox("Use AI for quality assessment", value=True)
-    
-    # Analysis button
-    if st.button("Analyze Quality", type="primary", use_container_width=True):
-        if uploaded_files and selected_commodity:
-            all_results = []
-            
-            with st.spinner("Analyzing images..."):
-                for file in uploaded_files:
-                    # Save and analyze the image
-                    analysis_result = analyze_quality_from_image(
-                        file, 
-                        selected_commodity, 
-                        use_ai=use_ai,
-                        analysis_type=analysis_type.lower()
-                    )
-                    
-                    if analysis_result and "quality_params" in analysis_result:
-                        quality_params = analysis_result["quality_params"]
-                        all_results.append(quality_params)
-                        
-                        # Save image path for display
-                        if "image_path" in analysis_result:
-                            image_display = analysis_result["image_path"]
-                        else:
-                            # Save uploaded file to display
-                            image_bytes = file.getvalue()
-                            with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
-                                tmp.write(image_bytes)
-                                image_display = tmp.name
-                        
-                        # Show the analysis result card
-                        show_image = True
-                        render_quality_analysis_card(
-                            image_path=image_display,
-                            quality_params=quality_params,
-                            analysis_summary=quality_params.get("ai_summary"),
-                            quality_score=quality_params.get("quality_score")
-                        )
-                        
-                        # Price Estimation Section
-                        st.markdown("### Price Estimation")
-                        
-                        # Show a select box for regions
-                        from database_sql import get_regions
-                        regions = get_regions(selected_commodity)
-                        
-                        selected_region = st.selectbox(
-                            "Select Region for Price Calculation",
-                            options=regions,
-                            index=0 if regions else None,
-                            key="price_region"
-                        )
-                        
-                        if st.button("Calculate Price Estimate", use_container_width=True):
-                            # Calculate price based on quality parameters
-                            price_result = calculate_price(
-                                selected_commodity,
-                                quality_params,
-                                selected_region
-                            )
-                            
-                            if price_result:
-                                # Extract values for display
-                                base_price = price_result.get("base_price", 0)
-                                final_price = price_result.get("final_price", 0)
-                                quality_delta = price_result.get("quality_delta", 0)
-                                location_delta = price_result.get("location_delta", 0)
-                                market_delta = price_result.get("market_delta", 0)
-                                
-                                # Display price summary
-                                st.markdown(
-                                    f"""
-                                    <div style="background-color: white; border-radius: 10px; padding: 20px; 
-                                                box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); margin-bottom: 20px;">
-                                        <h3 style="margin-top: 0; color: #1E88E5;">Price Estimate</h3>
-                                        <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
-                                            <span style="font-weight: 600;">Base Price:</span>
-                                            <span>₹{base_price:.2f}</span>
-                                        </div>
-                                        <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
-                                            <span style="font-weight: 600;">Quality Adjustment:</span>
-                                            <span style="color: {'#4CAF50' if quality_delta >= 0 else '#F44336'};">
-                                                {'+' if quality_delta >= 0 else ''}₹{quality_delta:.2f}
-                                            </span>
-                                        </div>
-                                        <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
-                                            <span style="font-weight: 600;">Location Adjustment:</span>
-                                            <span style="color: {'#4CAF50' if location_delta >= 0 else '#F44336'};">
-                                                {'+' if location_delta >= 0 else ''}₹{location_delta:.2f}
-                                            </span>
-                                        </div>
-                                        <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
-                                            <span style="font-weight: 600;">Market Adjustment:</span>
-                                            <span style="color: {'#4CAF50' if market_delta >= 0 else '#F44336'};">
-                                                {'+' if market_delta >= 0 else ''}₹{market_delta:.2f}
-                                            </span>
-                                        </div>
-                                        <hr style="margin: 10px 0;">
-                                        <div style="display: flex; justify-content: space-between; font-size: 1.2rem; font-weight: 600;">
-                                            <span>Final Price:</span>
-                                            <span>₹{final_price:.2f}</span>
-                                        </div>
-                                    </div>
-                                    """,
-                                    unsafe_allow_html=True
-                                )
-                            else:
-                                st.error("Error calculating price estimate.")
-                    else:
-                        st.error("Error analyzing image. Please try again.")
-            
-            # If multiple images, show aggregate analysis
-            if len(all_results) > 1:
-                st.markdown("### Aggregate Analysis")
-                
-                # Calculate average values for parameters
-                avg_params = {}
-                for result in all_results:
-                    for k, v in result.items():
-                        if isinstance(v, (int, float)) and not k.startswith("_"):
-                            avg_params[k] = avg_params.get(k, 0) + v / len(all_results)
-                
-                # Display aggregate quality parameters
-                st.markdown("#### Average Quality Parameters")
-                
-                # Convert to DataFrame for display
-                avg_df = pd.DataFrame({
-                    "Parameter": list(avg_params.keys()),
-                    "Average Value": list(avg_params.values())
-                })
-                
-                # Format values
-                avg_df["Average Value"] = avg_df["Average Value"].apply(
-                    lambda x: f"{x:.2f}" if isinstance(x, (int, float)) else str(x)
-                )
-                
-                st.dataframe(avg_df, use_container_width=True, hide_index=True)
-                
-                # Calculate aggregate price if a region is selected
-                regions = get_regions(selected_commodity)
-                if regions:
-                    selected_region = st.selectbox(
-                        "Select Region for Aggregate Price",
-                        options=regions,
-                        index=0 if regions else None,
-                        key="agg_price_region"
-                    )
-                    
-                    if st.button("Calculate Aggregate Price", use_container_width=True):
-                        # Calculate price based on average quality parameters
-                        price_result = calculate_price(
-                            selected_commodity,
-                            avg_params,
-                            selected_region
-                        )
-                        
-                        if price_result:
-                            st.markdown(
-                                f"""
-                                <div style="background-color: #f8f9fa; border-radius: 10px; padding: 15px; margin-top: 10px;">
-                                    <h4 style="margin-top: 0;">Aggregate Price Estimate</h4>
-                                    <div style="font-size: 1.5rem; font-weight: 600; color: #1E88E5; margin: 10px 0;">
-                                        ₹{price_result.get('final_price', 0):.2f}
-                                    </div>
-                                    <div style="font-size: 0.9rem; color: #777;">
-                                        Base: ₹{price_result.get('base_price', 0):.2f} | 
-                                        Quality Adj: {price_result.get('quality_delta', 0):.2f} | 
-                                        Location Adj: {price_result.get('location_delta', 0):.2f}
-                                    </div>
-                                </div>
-                                """,
-                                unsafe_allow_html=True
-                            )
-        else:
-            # Show error if no files are uploaded or no commodity selected
-            if not uploaded_files:
-                st.error("Please upload at least one image file.")
-            if not selected_commodity:
-                st.error("Please select a commodity for analysis.")
-    else:
-        # Show empty state
-        st.markdown(
-            """
-            <div style="background-color: #f8f9fa; border-radius: 10px; padding: 20px; 
-                        text-align: center; height: 200px; display: flex; flex-direction: column; 
-                        justify-content: center; align-items: center; margin-top: 20px;">
-                <i class="fas fa-microscope" style="font-size: 3rem; color: #1E88E5; margin-bottom: 15px;"></i>
-                <h3 style="margin-bottom: 10px;">Upload Images for Analysis</h3>
-                <p style="color: #777;">Upload images of commodity samples to analyze quality parameters using AI.</p>
-            </div>
-            """,
-            unsafe_allow_html=True
+    with col1:
+        # Commodity selection
+        commodities = get_all_commodities()
+        if not commodities:
+            st.error("No commodities available. Please initialize the database first.")
+            return
+        
+        selected_commodity = st.selectbox(
+            "Select a Commodity",
+            commodities,
+            key="img_commodity"
         )
+        
+        # Analysis type selection
+        analysis_types = {
+            "general": "General Quality Assessment",
+            "detailed": "Detailed Quality Parameters",
+            "defects": "Defect Detection",
+            "grading": "Quality Grading"
+        }
+        
+        analysis_type = st.selectbox(
+            "Analysis Type",
+            list(analysis_types.keys()),
+            format_func=lambda x: analysis_types[x],
+            key="analysis_type"
+        )
+        
+        # Image upload
+        uploaded_file = st.file_uploader(
+            "Upload a commodity image",
+            type=["jpg", "jpeg", "png"],
+            key="commodity_image"
+        )
+        
+        # Example images selector (optional)
+        st.markdown("#### Or select an example image")
+        example_options = ["None", "Wheat Sample", "Rice Sample", "Cotton Sample"]
+        selected_example = st.selectbox("Example Images", example_options, key="example_selector")
+        
+        # Map selection to file paths
+        example_files = {
+            "Wheat Sample": "assets/samples/wheat_sample.jpg",
+            "Rice Sample": "assets/samples/rice_sample.jpg",
+            "Cotton Sample": "assets/samples/cotton_sample.jpg"
+        }
+        
+        # Use the selected example if chosen
+        use_example = selected_example != "None"
+        example_file = example_files.get(selected_example) if use_example else None
+        
+        # Add analyze button
+        analyze_image_button = st.button(
+            "Analyze Image",
+            use_container_width=True,
+            type="primary",
+            key="img_analyze",
+            disabled=(not uploaded_file and not example_file)
+        )
+    
+    # Results column
+    with col2:
+        st.markdown("### Analysis Results")
+        
+        # Display selected image if available
+        if uploaded_file is not None:
+            # Display the uploaded image
+            image = Image.open(uploaded_file)
+            st.image(image, caption="Uploaded Image", use_column_width=True)
+            
+            # Reset the file pointer for later use
+            uploaded_file.seek(0)
+        elif example_file:
+            # Display the example image if selected
+            try:
+                image = Image.open(example_file)
+                st.image(image, caption=f"Example: {selected_example}", use_column_width=True)
+            except FileNotFoundError:
+                st.error(f"Example file not found: {example_file}")
+                example_file = None
+        
+        # Process the analysis when button is clicked
+        if analyze_image_button:
+            # Check if we have an image to analyze
+            if uploaded_file is not None:
+                # Save the uploaded image
+                image_path = save_uploaded_image(uploaded_file)
+                
+                with st.spinner("Analyzing image using AI..."):
+                    try:
+                        # Analyze the uploaded image
+                        analysis_result = analyze_commodity_image(
+                            image_data=image_path,
+                            commodity=selected_commodity,
+                            analysis_type=analysis_type
+                        )
+                        
+                        # Extract quality parameters from analysis results
+                        quality_params = analysis_result.get("quality_params", {})
+                        quality_score = analysis_result.get("quality_score", 0)
+                        quality_grade = analysis_result.get("quality_grade", "C")
+                        
+                        # Display quality analysis card
+                        render_quality_analysis_card(
+                            commodity_name=selected_commodity,
+                            quality_params=quality_params,
+                            quality_score=quality_score,
+                            quality_grade=quality_grade
+                        )
+                        
+                        # Display additional analysis
+                        st.markdown("#### AI Analysis")
+                        st.markdown(analysis_result.get("analysis_summary", "No analysis available."))
+                    except Exception as e:
+                        st.error(f"Error analyzing image: {str(e)}")
+            elif example_file:
+                # Analyze the example image
+                with st.spinner("Analyzing example image using AI..."):
+                    try:
+                        # Analyze the example image
+                        analysis_result = analyze_commodity_image(
+                            image_data=example_file,
+                            commodity=selected_commodity,
+                            analysis_type=analysis_type
+                        )
+                        
+                        # Extract quality parameters from analysis results
+                        quality_params = analysis_result.get("quality_params", {})
+                        quality_score = analysis_result.get("quality_score", 0)
+                        quality_grade = analysis_result.get("quality_grade", "C")
+                        
+                        # Display quality analysis card
+                        render_quality_analysis_card(
+                            commodity_name=selected_commodity,
+                            quality_params=quality_params,
+                            quality_score=quality_score,
+                            quality_grade=quality_grade
+                        )
+                        
+                        # Display additional analysis
+                        st.markdown("#### AI Analysis")
+                        st.markdown(analysis_result.get("analysis_summary", "No analysis available."))
+                    except Exception as e:
+                        st.error(f"Error analyzing image: {str(e)}")
+            else:
+                st.error("Please upload an image or select an example image first.")

@@ -1,34 +1,14 @@
 """
-Quality analyzer module for analyzing quality from images, lab reports, and other data.
-Uses advanced AI models for image analysis.
+Quality analyzer module for agricultural commodities.
+
+This module provides functions for analyzing quality parameters of agricultural
+commodities and calculating quality scores based on industry standards.
 """
 
-import os
-import io
 import logging
 import json
-import base64
-import numpy as np
-import pandas as pd
-from PIL import Image
-import re
-import time
-
-from models import assess_quality_parameters
-from database import get_commodity_data
-
-# Import AI vision module
-try:
-    from ai_vision import (
-        analyze_commodity_image, 
-        analyze_video_frame, 
-        extract_quality_parameters,
-        save_uploaded_image
-    )
-    AI_VISION_AVAILABLE = True
-except ImportError:
-    logger.warning("AI Vision module not available. Using fallback methods.")
-    AI_VISION_AVAILABLE = False
+import os
+from datetime import datetime
 
 # Configure logging
 logging.basicConfig(
@@ -37,729 +17,466 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Directory for storing analyzed images
-UPLOADS_DIR = "uploads/images"
-os.makedirs(UPLOADS_DIR, exist_ok=True)
+# Import database functionality
+from database_sql import get_price_quality_parameters
 
-def analyze_quality_from_image(image_file, commodity, use_ai=True, analysis_type="detailed"):
+
+def analyze_commodity_quality(commodity, quality_params):
     """
-    Analyze quality parameters from an image.
+    Analyze quality of a commodity based on provided parameters.
     
     Args:
-        image_file: Image file object
-        commodity (str): The commodity
-        use_ai (bool): Whether to use AI vision for analysis
-        analysis_type (str): Type of analysis to perform ("general", "detailed", "defects", "grading")
+        commodity (str): The commodity type
+        quality_params (dict): Dictionary of quality parameters
         
     Returns:
-        dict: Extracted quality parameters
+        dict: Analysis results
     """
-    logger.info(f"Analyzing quality from image for {commodity} using {'AI' if use_ai else 'traditional'} method")
-    
     try:
-        # Save uploaded image
-        save_path = save_uploaded_image(image_file, UPLOADS_DIR)
+        if not commodity or not quality_params:
+            return None
         
-        # Reset file pointer for potential future use
-        image_file.seek(0)
+        # Calculate quality score
+        quality_score, quality_grade = calculate_quality_score(commodity, quality_params)
         
-        # Get commodity data for parameter ranges and validation
-        commodity_data = get_commodity_data(commodity)
-        if not commodity_data or 'quality_parameters' not in commodity_data:
-            logger.warning(f"No quality parameters found for commodity: {commodity}")
-            return {}
+        # Generate analysis summary
+        analysis_summary = generate_quality_summary(commodity, quality_params, quality_score, quality_grade)
         
-        # Use AI vision if available and requested
-        if use_ai and AI_VISION_AVAILABLE:
-            try:
-                # Analyze using OpenAI GPT-4V
-                logger.info(f"Performing {analysis_type} AI analysis for {commodity}")
-                result = analyze_commodity_image(save_path, commodity, analysis_type)
+        # Return analysis results
+        return {
+            "commodity": commodity,
+            "quality_params": quality_params,
+            "quality_score": quality_score,
+            "quality_grade": quality_grade,
+            "confidence": 0.95,  # High confidence for direct parameter analysis
+            "analysis_summary": analysis_summary,
+            "timestamp": datetime.now()
+        }
+    except Exception as e:
+        logger.error(f"Error analyzing commodity quality: {e}")
+        return None
+
+
+def calculate_quality_score(commodity, quality_params):
+    """
+    Calculate quality score based on commodity parameters.
+    
+    Args:
+        commodity (str): The commodity type
+        quality_params (dict): Dictionary of quality parameters
+        
+    Returns:
+        tuple: (quality_score, quality_grade)
+    """
+    try:
+        if not commodity or not quality_params:
+            return 70, "C"  # Default average score
+        
+        # Get standard quality parameters for this commodity
+        standard_params = get_price_quality_parameters(commodity)
+        
+        if not standard_params:
+            logger.warning(f"No standard quality parameters found for {commodity}")
+            
+            # Use a basic scoring algorithm when no standards available
+            score = 70  # Default base score
+            
+            # Adjust for common parameters if available
+            if "moisture_content" in quality_params:
+                moisture = quality_params["moisture_content"]
+                # Lower moisture is generally better (within limits)
+                if moisture < 10:
+                    score += 5
+                elif moisture > 16:
+                    score -= 10
                 
-                if result["status"] == "success":
-                    # Extract structured quality parameters from AI analysis
-                    quality_params = extract_quality_parameters(result, commodity)
+            if "foreign_matter" in quality_params:
+                foreign = quality_params["foreign_matter"]
+                # Lower foreign matter is better
+                if foreign < 0.5:
+                    score += 10
+                elif foreign > 2:
+                    score -= 15 * (foreign / 2)
+            
+            # Cap the score between 0 and 100
+            score = max(0, min(score, 100))
+        else:
+            # Calculate score based on standard parameters and their impact factors
+            score = 80  # Start with a base score
+            
+            for param_name, param_value in quality_params.items():
+                if param_name in standard_params:
+                    std_param = standard_params[param_name]
                     
-                    # Add AI summary and confidence score
-                    if "analysis" in result:
-                        # Extract a summary from the analysis for display
-                        analysis_text = result["analysis"]
-                        quality_params["ai_summary"] = analysis_text[:500] if len(analysis_text) > 500 else analysis_text
-                        
-                        # Add confidence level based on certainty in the response
-                        certainty_phrases = ["I'm confident", "clearly", "definitely", "certainly", "evident"]
-                        uncertainty_phrases = ["may be", "might be", "appears to", "possibly", "uncertain", "unclear", "hard to tell"]
-                        
-                        confidence_score = 0.7  # Default medium-high confidence
-                        
-                        # Adjust confidence based on language used in analysis
-                        for phrase in certainty_phrases:
-                            if phrase.lower() in analysis_text.lower():
-                                confidence_score += 0.05
-                        
-                        for phrase in uncertainty_phrases:
-                            if phrase.lower() in analysis_text.lower():
-                                confidence_score -= 0.1
-                        
-                        # Cap confidence between 0.1 and 0.95
-                        confidence_score = max(0.1, min(0.95, confidence_score))
-                        quality_params["confidence"] = confidence_score
+                    # Skip if necessary fields are missing
+                    if "min" not in std_param or "max" not in std_param or "impact_factor" not in std_param:
+                        continue
                     
-                    # Determine quality grade
-                    if "quality_score" in quality_params:
-                        score = quality_params["quality_score"]
+                    # Get parameter range and impact
+                    param_min = std_param.get("min", 0)
+                    param_max = std_param.get("max", 100)
+                    param_std = std_param.get("standard_value", (param_min + param_max) / 2)
+                    impact_factor = std_param.get("impact_factor", 1.0)
+                    
+                    # Calculate where this value falls in the range
+                    if param_max == param_min:
+                        continue  # Avoid division by zero
+                    
+                    # Normalize the parameter to 0-1 range
+                    param_range = param_max - param_min
+                    normalized_value = (param_value - param_min) / param_range
+                    normalized_std = (param_std - param_min) / param_range
+                    
+                    # Calculate the difference from standard value
+                    # If impact_factor is positive, higher values are better
+                    # If impact_factor is negative, lower values are better
+                    if impact_factor > 0:
+                        # For positive impact, higher than standard is good
+                        if normalized_value > normalized_std:
+                            # Bonus for being better than standard
+                            score_change = (normalized_value - normalized_std) * impact_factor * 20
+                        else:
+                            # Penalty for being worse than standard
+                            score_change = (normalized_value - normalized_std) * impact_factor * 25
                     else:
-                        # Calculate a quality score based on parameters
-                        score = calculate_quality_score(quality_params, commodity_data)
-                        quality_params["quality_score"] = score
+                        # For negative impact, lower than standard is good
+                        if normalized_value < normalized_std:
+                            # Bonus for being better than standard
+                            score_change = (normalized_std - normalized_value) * abs(impact_factor) * 20
+                        else:
+                            # Penalty for being worse than standard
+                            score_change = (normalized_std - normalized_value) * abs(impact_factor) * 25
                     
-                    # Add quality grade based on score
-                    if score >= 90:
-                        quality_params["quality_grade"] = "Excellent"
-                    elif score >= 75:
-                        quality_params["quality_grade"] = "Good"
-                    elif score >= 50:
-                        quality_params["quality_grade"] = "Average"
-                    elif score >= 25:
-                        quality_params["quality_grade"] = "Below Average"
-                    else:
-                        quality_params["quality_grade"] = "Poor"
-                    
-                    # Add timestamp and path
-                    quality_params["timestamp"] = int(time.time())
-                    quality_params["image_path"] = save_path
-                    quality_params["analysis_type"] = analysis_type
-                    
-                    logger.info(f"AI analysis completed successfully with confidence {quality_params.get('confidence', 'unknown')}")
-                    return quality_params
-                else:
-                    logger.warning(f"AI analysis failed: {result.get('message', 'Unknown error')}")
-                    # Fall back to traditional method
-            except Exception as ai_error:
-                logger.error(f"Error in AI analysis: {ai_error}")
-                logger.warning("Falling back to traditional method")
+                    # Apply change to score
+                    score += score_change
+            
+            # Cap the score between 0 and 100
+            score = max(0, min(score, 100))
         
-        # Fallback to traditional method if AI not available or failed
-        logger.info(f"Using traditional method for analyzing {commodity}")
+        # Determine grade based on score
+        grade = "C"  # Default grade
         
-        # Read image data
-        image_file.seek(0)
-        image_data = image_file.read()
-        
-        # Reset file pointer again
-        image_file.seek(0)
-        
-        # Get quality parameters using traditional method
-        quality_params = assess_quality_parameters(commodity, image_data=image_data, use_ai=False)
-        
-        # Validate parameters against known ranges
-        validated_params = {}
-        
-        for param, value in quality_params.items():
-            if param in commodity_data['quality_parameters']:
-                param_data = commodity_data['quality_parameters'][param]
-                min_val = param_data.get('min', 0)
-                max_val = param_data.get('max', 100)
-                
-                # Ensure value is within range
-                value = max(min_val, min(max_val, value))
-                
-                validated_params[param] = value
-            elif isinstance(value, (int, float)):
-                # Include numeric parameters even if not in commodity data
-                validated_params[param] = value
-        
-        # Add metadata to indicate traditional method
-        validated_params["timestamp"] = int(time.time())
-        validated_params["image_path"] = save_path
-        validated_params["analysis_method"] = "traditional"
-        validated_params["confidence"] = 0.5  # Medium confidence for traditional method
-        
-        # Calculate and add quality score
-        score = calculate_quality_score(validated_params, commodity_data)
-        validated_params["quality_score"] = score
-        
-        # Add quality grade based on score
-        if score >= 90:
-            validated_params["quality_grade"] = "Excellent"
+        if score >= 95:
+            grade = "A+"
+        elif score >= 90:
+            grade = "A"
+        elif score >= 85:
+            grade = "B+"
+        elif score >= 80:
+            grade = "B"
         elif score >= 75:
-            validated_params["quality_grade"] = "Good"
-        elif score >= 50:
-            validated_params["quality_grade"] = "Average"
-        elif score >= 25:
-            validated_params["quality_grade"] = "Below Average"
+            grade = "C+"
+        elif score >= 70:
+            grade = "C"
+        elif score >= 65:
+            grade = "D"
         else:
-            validated_params["quality_grade"] = "Poor"
+            grade = "E"
         
-        return validated_params
+        return score, grade
     except Exception as e:
-        logger.error(f"Error analyzing image: {e}")
-        return {}
+        logger.error(f"Error calculating quality score: {e}")
+        return 70, "C"  # Default average score
 
-def analyze_report(report_file):
+
+def generate_quality_summary(commodity, quality_params, quality_score, quality_grade):
     """
-    Analyze a lab report to extract commodity and quality parameters.
+    Generate a text summary of quality analysis.
     
     Args:
-        report_file: Lab report file object
-        
-    Returns:
-        tuple: (commodity, quality_parameters)
-    """
-    logger.info("Analyzing lab report")
-    
-    try:
-        # In a real implementation, this would use OCR and text analysis
-        # to extract information from the lab report
-        # For demonstration, we'll generate plausible data
-        
-        # Try to guess the commodity from the filename
-        filename = report_file.name if hasattr(report_file, 'name') else "unknown"
-        
-        # Simple keyword matching
-        commodity_keywords = {
-            "wheat": "Wheat",
-            "rice": "Rice",
-            "dal": "Tur Dal",
-            "tur": "Tur Dal",
-            "soya": "Soyabean",
-            "mustard": "Mustard"
-        }
-        
-        detected_commodity = None
-        
-        for keyword, commodity in commodity_keywords.items():
-            if keyword.lower() in filename.lower():
-                detected_commodity = commodity
-                break
-        
-        # If no commodity detected, use a default
-        if not detected_commodity:
-            detected_commodity = "Wheat"  # Default
-        
-        # Get quality parameters for this commodity
-        quality_params = assess_quality_parameters(detected_commodity)
-        
-        return (detected_commodity, quality_params)
-    except Exception as e:
-        logger.error(f"Error analyzing report: {e}")
-        return (None, {})
-
-def analyze_multiple_samples(image_files, commodity):
-    """
-    Analyze multiple samples of the same commodity and calculate average quality.
-    
-    Args:
-        image_files (list): List of image file objects
-        commodity (str): The commodity
-        
-    Returns:
-        dict: Average quality parameters and analysis details
-    """
-    logger.info(f"Analyzing multiple samples for {commodity}")
-    
-    if not image_files:
-        logger.warning("No image files provided")
-        return {
-            'status': 'error',
-            'message': 'No image files provided'
-        }
-    
-    all_params = []
-    
-    for i, image_file in enumerate(image_files):
-        logger.info(f"Analyzing sample {i+1}")
-        
-        # Analyze each sample
-        sample_params = analyze_quality_from_image(image_file, commodity)
-        
-        if sample_params:
-            all_params.append(sample_params)
-    
-    if not all_params:
-        logger.warning("No valid quality parameters extracted")
-        return {
-            'status': 'error',
-            'message': 'No valid quality parameters extracted'
-        }
-    
-    # Calculate average parameters
-    avg_params = {}
-    
-    # Get all parameter names
-    param_names = set()
-    for params in all_params:
-        param_names.update(params.keys())
-    
-    # Calculate average for each parameter
-    for param in param_names:
-        values = [params.get(param, 0) for params in all_params if param in params]
-        if values:
-            avg_params[param] = sum(values) / len(values)
-    
-    # Calculate standard deviation for confidence
-    std_devs = {}
-    
-    for param in avg_params:
-        values = [params.get(param, 0) for params in all_params if param in params]
-        if len(values) > 1:
-            std_devs[param] = np.std(values)
-        else:
-            std_devs[param] = 0
-    
-    # Calculate coefficient of variation as a measure of reliability
-    cv = {}
-    
-    for param, avg in avg_params.items():
-        if avg > 0 and param in std_devs:
-            cv[param] = (std_devs[param] / avg) * 100
-        else:
-            cv[param] = 0
-    
-    # Determine overall reliability
-    if all_params:
-        reliability = {
-            'samples_analyzed': len(all_params),
-            'parameter_cv': cv,
-            'overall_cv': sum(cv.values()) / len(cv) if cv else 0
-        }
-        
-        if reliability['overall_cv'] < 10:
-            reliability['rating'] = 'high'
-        elif reliability['overall_cv'] < 20:
-            reliability['rating'] = 'medium'
-        else:
-            reliability['rating'] = 'low'
-    else:
-        reliability = {
-            'samples_analyzed': 0,
-            'rating': 'unknown'
-        }
-    
-    return {
-        'status': 'success',
-        'average_quality': avg_params,
-        'standard_deviations': std_devs,
-        'coefficient_of_variation': cv,
-        'reliability': reliability,
-        'samples_analyzed': len(all_params)
-    }
-
-def compare_to_standard_grade(quality_params, commodity):
-    """
-    Compare quality parameters to standard grade.
-    
-    Args:
+        commodity (str): The commodity type
         quality_params (dict): Quality parameters
-        commodity (str): The commodity
+        quality_score (float): Calculated quality score
+        quality_grade (str): Assigned quality grade
+        
+    Returns:
+        str: Analysis summary
+    """
+    try:
+        # Base summary based on grade
+        if quality_grade == "A+":
+            summary = f"Premium quality {commodity} meeting the highest industry standards."
+        elif quality_grade == "A":
+            summary = f"Excellent quality {commodity} meeting strict quality standards."
+        elif quality_grade == "B+":
+            summary = f"Very good quality {commodity} with few minor quality issues."
+        elif quality_grade == "B":
+            summary = f"Good quality {commodity} meeting most quality standards."
+        elif quality_grade == "C+":
+            summary = f"Above average quality {commodity} with some notable quality issues."
+        elif quality_grade == "C":
+            summary = f"Average quality {commodity} meeting basic quality standards."
+        elif quality_grade == "D":
+            summary = f"Below average quality {commodity} with significant quality issues."
+        else:  # Grade E
+            summary = f"Poor quality {commodity} with major quality issues."
+        
+        # Add details based on specific parameters
+        details = []
+        
+        if "moisture_content" in quality_params:
+            moisture = quality_params["moisture_content"]
+            if moisture < 12:
+                details.append(f"Low moisture content ({moisture:.1f}%) is ideal for storage.")
+            elif moisture > 15:
+                details.append(f"High moisture content ({moisture:.1f}%) may cause storage issues.")
+        
+        if "foreign_matter" in quality_params:
+            foreign = quality_params["foreign_matter"]
+            if foreign < 0.5:
+                details.append(f"Minimal foreign matter ({foreign:.1f}%) indicates good cleaning practices.")
+            elif foreign > 2:
+                details.append(f"High foreign matter content ({foreign:.1f}%) requires additional cleaning.")
+        
+        # Add commodity-specific parameter summaries
+        if commodity == "Rice":
+            if "broken_percentage" in quality_params:
+                broken = quality_params["broken_percentage"]
+                if broken < 5:
+                    details.append(f"Low broken percentage ({broken:.1f}%) indicates careful processing.")
+                elif broken > 15:
+                    details.append(f"High broken percentage ({broken:.1f}%) may affect consumer acceptance.")
+            
+            if "head_rice_recovery" in quality_params:
+                head_rice = quality_params["head_rice_recovery"]
+                if head_rice > 80:
+                    details.append(f"Excellent head rice recovery ({head_rice:.1f}%).")
+                elif head_rice < 65:
+                    details.append(f"Low head rice recovery ({head_rice:.1f}%) indicates processing issues.")
+        
+        elif commodity == "Wheat":
+            if "protein_content" in quality_params:
+                protein = quality_params["protein_content"]
+                if protein > 12:
+                    details.append(f"High protein content ({protein:.1f}%) is excellent for bread making.")
+                elif protein < 10:
+                    details.append(f"Low protein content ({protein:.1f}%) may be better for pastry products.")
+            
+            if "gluten" in quality_params:
+                gluten = quality_params["gluten"]
+                if gluten > 28:
+                    details.append(f"Strong gluten content ({gluten:.1f}%) indicates good baking quality.")
+                elif gluten < 24:
+                    details.append(f"Weak gluten content ({gluten:.1f}%) may limit bread-making applications.")
+        
+        elif commodity == "Maize":
+            if "broken_kernels" in quality_params:
+                broken = quality_params["broken_kernels"]
+                if broken < 3:
+                    details.append(f"Low broken kernels ({broken:.1f}%) indicates careful handling.")
+                elif broken > 8:
+                    details.append(f"High broken kernels ({broken:.1f}%) may affect industrial use quality.")
+            
+            if "aflatoxin" in quality_params:
+                aflatoxin = quality_params["aflatoxin"]
+                if aflatoxin < 5:
+                    details.append(f"Low aflatoxin level ({aflatoxin:.1f} ppb) indicates good storage conditions.")
+                elif aflatoxin > 15:
+                    details.append(f"High aflatoxin level ({aflatoxin:.1f} ppb) may pose health concerns.")
+        
+        # Combine summary and details
+        if details:
+            summary += f" {' '.join(details)}"
+        
+        # Add recommendation based on grade
+        if quality_grade in ["A+", "A", "B+"]:
+            summary += " Suitable for premium markets and export."
+        elif quality_grade in ["B", "C+"]:
+            summary += " Suitable for domestic markets with standard requirements."
+        elif quality_grade in ["C", "D"]:
+            summary += " May require processing or blending before commercial use."
+        else:  # Grade E
+            summary += " Recommended for lower grade applications."
+        
+        return summary
+    except Exception as e:
+        logger.error(f"Error generating quality summary: {e}")
+        return f"Analysis of {commodity} quality parameters indicates grade {quality_grade} quality."
+
+
+def compare_quality_parameters(commodity, params1, params2):
+    """
+    Compare two sets of quality parameters for the same commodity.
+    
+    Args:
+        commodity (str): The commodity type
+        params1 (dict): First set of quality parameters
+        params2 (dict): Second set of quality parameters
         
     Returns:
         dict: Comparison results
     """
-    logger.info(f"Comparing quality to standard grade for {commodity}")
-    
-    # Get commodity data
-    commodity_data = get_commodity_data(commodity)
-    
-    if not commodity_data or 'quality_parameters' not in commodity_data:
-        logger.warning(f"No quality parameters found for commodity: {commodity}")
-        return {
-            'status': 'error',
-            'message': 'No quality parameters found'
+    try:
+        if not commodity or not params1 or not params2:
+            return None
+        
+        # Get standard quality parameters
+        standard_params = get_price_quality_parameters(commodity)
+        
+        # Calculate scores for both parameter sets
+        score1, grade1 = calculate_quality_score(commodity, params1)
+        score2, grade2 = calculate_quality_score(commodity, params2)
+        
+        # Compare parameters
+        comparison = {
+            "commodity": commodity,
+            "score_difference": score1 - score2,
+            "grade_difference": f"{grade1} vs {grade2}",
+            "parameter_differences": {}
         }
-    
-    # Get standard quality parameters
-    standard_params = {
-        param: details.get('standard_value', (details.get('min', 0) + details.get('max', 100)) / 2)
-        for param, details in commodity_data['quality_parameters'].items()
-    }
-    
-    # Compare each parameter
-    comparison = {}
-    
-    for param, std_value in standard_params.items():
-        if param in quality_params:
-            actual_value = quality_params[param]
+        
+        # Add detailed parameter differences
+        all_params = set(list(params1.keys()) + list(params2.keys()))
+        
+        for param in all_params:
+            val1 = params1.get(param)
+            val2 = params2.get(param)
             
-            # Calculate deviation
-            deviation = actual_value - std_value
-            
-            # Calculate percentage deviation
-            if std_value != 0:
-                percentage = (deviation / std_value) * 100
-            else:
-                percentage = 0
-            
-            # Get parameter details
-            param_data = commodity_data['quality_parameters'].get(param, {})
-            unit = param_data.get('unit', '')
-            
-            # Determine impact
-            impact_type = param_data.get('impact_type', 'linear')
-            impact_data = commodity_data.get('quality_impact', {}).get(param, {})
-            
-            if impact_type == 'linear':
-                impact_factor = impact_data.get('factor', 0)
-                price_impact = deviation * impact_factor
-            elif impact_type == 'threshold':
-                if deviation > 0:
-                    impact_factor = impact_data.get('premium_factor', 0)
-                    price_impact = deviation * impact_factor
-                else:
-                    impact_factor = impact_data.get('discount_factor', 0)
-                    price_impact = deviation * impact_factor
-            else:
-                impact_factor = 0
-                price_impact = 0
-            
-            # Determine if better or worse
-            if impact_factor > 0:
-                # Positive factor means higher is better
-                is_better = deviation > 0
-            else:
-                # Negative factor means lower is better
-                is_better = deviation < 0
-            
-            comparison[param] = {
-                'standard': std_value,
-                'actual': actual_value,
-                'deviation': deviation,
-                'percentage': percentage,
-                'unit': unit,
-                'is_better': is_better,
-                'price_impact': price_impact
-            }
-    
-    # Calculate overall quality score
-    # Simple approach: normalize deviations and calculate weighted average
-    quality_score = 0
-    total_weight = 0
-    
-    for param, details in comparison.items():
-        impact_data = commodity_data.get('quality_impact', {}).get(param, {})
-        weight = abs(impact_data.get('factor', 0))
-        
-        if weight == 0:
-            continue  # Skip parameters with no impact
-        
-        # Convert deviation to a score between 0 and 100
-        # 0 = worst possible value, 100 = best possible value
-        param_data = commodity_data['quality_parameters'].get(param, {})
-        min_val = param_data.get('min', 0)
-        max_val = param_data.get('max', 100)
-        std_val = param_data.get('standard_value', (min_val + max_val) / 2)
-        actual_val = details['actual']
-        
-        # Calculate parameter score
-        if weight > 0:
-            # Higher is better
-            if actual_val >= std_val:
-                # Above standard, scale from 50 to 100
-                param_score = 50 + 50 * min(actual_val - std_val, max_val - std_val) / (max_val - std_val)
-            else:
-                # Below standard, scale from 0 to 50
-                param_score = 50 * max(actual_val - min_val, 0) / (std_val - min_val)
-        else:
-            # Lower is better
-            if actual_val <= std_val:
-                # Below standard, scale from 50 to 100
-                param_score = 50 + 50 * min(std_val - actual_val, std_val - min_val) / (std_val - min_val)
-            else:
-                # Above standard, scale from 0 to 50
-                param_score = 50 * max(max_val - actual_val, 0) / (max_val - std_val)
-        
-        # Add to weighted average
-        quality_score += param_score * abs(weight)
-        total_weight += abs(weight)
-    
-    if total_weight > 0:
-        quality_score /= total_weight
-    else:
-        quality_score = 50  # Neutral score if no weights
-    
-    # Determine quality grade
-    if quality_score >= 90:
-        quality_grade = "Excellent"
-    elif quality_score >= 75:
-        quality_grade = "Good"
-    elif quality_score >= 50:
-        quality_grade = "Standard"
-    elif quality_score >= 25:
-        quality_grade = "Below Standard"
-    else:
-        quality_grade = "Poor"
-    
-    return {
-        'status': 'success',
-        'comparison': comparison,
-        'quality_score': quality_score,
-        'quality_grade': quality_grade,
-        'total_price_impact': sum(details['price_impact'] for details in comparison.values())
-    }
-
-def generate_quality_certificate(quality_params, commodity, analysis_result):
-    """
-    Generate a quality certificate based on analysis results.
-    
-    Args:
-        quality_params (dict): Quality parameters
-        commodity (str): The commodity
-        analysis_result (dict): Analysis results
-        
-    Returns:
-        dict: Certificate data
-    """
-    logger.info(f"Generating quality certificate for {commodity}")
-    
-    # Get current date
-    current_date = pd.Timestamp.now().strftime('%Y-%m-%d')
-    
-    # Get commodity data
-    commodity_data = get_commodity_data(commodity)
-    
-    if not commodity_data:
-        logger.warning(f"No data found for commodity: {commodity}")
-        return {
-            'status': 'error',
-            'message': 'Commodity data not found'
-        }
-    
-    # Create certificate data
-    certificate = {
-        'certificate_id': f"QC-{commodity.replace(' ', '')}-{current_date.replace('-', '')}",
-        'issue_date': current_date,
-        'commodity': commodity,
-        'quality_parameters': quality_params,
-        'analysis_result': analysis_result,
-        'certificate_issuer': 'AgriPrice Engine',
-        'validity_period': '30 days'
-    }
-    
-    return {
-        'status': 'success',
-        'certificate': certificate
-    }
-
-def calculate_quality_score(quality_params, commodity_data):
-    """
-    Calculate a quality score based on quality parameters and commodity data.
-    Implements an enhanced algorithm for accurate quality assessment.
-    
-    Args:
-        quality_params (dict): Quality parameters
-        commodity_data (dict): Commodity reference data
-        
-    Returns:
-        float: Quality score from 0-100
-    """
-    logger.info(f"Calculating quality score with {len(quality_params)} parameters")
-    
-    if not quality_params or not commodity_data or 'quality_parameters' not in commodity_data:
-        logger.warning("Missing quality parameters or commodity data")
-        return 50  # Default neutral score
-    
-    # If quality_score already exists and is within range, prioritize it
-    if "quality_score" in quality_params and isinstance(quality_params["quality_score"], (int, float)):
-        direct_score = quality_params["quality_score"]
-        if 0 <= direct_score <= 100:
-            logger.info(f"Using provided quality score: {direct_score}")
-            return direct_score
-    
-    # Calculate overall quality score (0-100)
-    quality_score = 0
-    total_weight = 0
-    param_scores = {}  # Store individual parameter scores for logging/debugging
-    
-    # Get impact factors for each parameter
-    impact_data = commodity_data.get('quality_impact', {})
-    
-    # Quick check for quality_grade if available - use as a baseline
-    base_score = 50  # Default neutral
-    if "quality_grade" in quality_params:
-        grade = quality_params["quality_grade"].lower() if isinstance(quality_params["quality_grade"], str) else ""
-        grade_scores = {
-            "excellent": 90,
-            "premium": 90,
-            "good": 75,
-            "average": 50,
-            "fair": 50,
-            "below average": 35,
-            "poor": 20,
-            "sub-standard": 20
-        }
-        for grade_name, score in grade_scores.items():
-            if grade_name in grade:
-                base_score = score
-                logger.info(f"Using quality grade '{quality_params['quality_grade']}' as baseline: {base_score}")
-                break
-    
-    # Process each parameter
-    for param, value in quality_params.items():
-        # Skip non-numeric values and metadata fields
-        if not isinstance(value, (int, float)) or param.startswith('ai_') or param in [
-            'timestamp', 'image_path', 'analysis_method', 'analysis_type', 'confidence',
-            'quality_grade', 'quality_score', 'computed_quality_score', 'error'
-        ]:
-            continue
-            
-        # Get parameter details and impact factor
-        param_data = commodity_data['quality_parameters'].get(param, {})
-        if not param_data:
-            # Fall back to default parameters if not in reference data
-            param_data = {
-                'min': 0,
-                'max': 100,
-                'standard_value': 50,
-                'unit': '',
-                'impact_type': 'linear'
-            }
-            
-        # Determine impact factor and type
-        impact_info = impact_data.get(param, {})
-        impact_factor = abs(impact_info.get('factor', 1.0))  # Default to weight of 1.0
-        impact_type = impact_info.get('impact_type', param_data.get('impact_type', 'linear'))
-        
-        if impact_factor <= 0:
-            impact_factor = 1.0  # Ensure positive weight
-        
-        # Get parameter range
-        min_val = param_data.get('min', 0)
-        max_val = param_data.get('max', 100)
-        std_val = param_data.get('standard_value', (min_val + max_val) / 2)
-        
-        # Ensure value is within valid range
-        value = max(min_val, min(max_val, value))
-        
-        # Calculate parameter score based on impact type and direction
-        if impact_type == 'threshold':
-            # Threshold-based scoring (step function)
-            thresholds = impact_info.get('thresholds', [])
-            if thresholds:
-                # Sort thresholds by value
-                thresholds.sort(key=lambda x: x.get('value', 0))
+            if val1 is not None and val2 is not None:
+                # Parameter exists in both sets
+                diff = val1 - val2
+                diff_percent = (diff / val2) * 100 if val2 != 0 else 0
                 
-                # Find applicable threshold
-                param_score = 50  # Default
-                for threshold in thresholds:
-                    threshold_value = threshold.get('value', 0)
-                    threshold_score = threshold.get('score', 50)
-                    
-                    if value >= threshold_value:
-                        param_score = threshold_score
-                    else:
-                        break
-            else:
-                # Fallback to linear if no thresholds defined
-                param_score = calculate_linear_score(value, min_val, max_val, std_val, 
-                                                    impact_info.get('factor', 0) >= 0)
+                # Check if this parameter has an impact factor in standards
+                impact = 0
+                if standard_params and param in standard_params:
+                    impact = standard_params[param].get("impact_factor", 0)
+                
+                better = None
+                if impact > 0:
+                    # Higher values are better
+                    better = 1 if diff > 0 else (2 if diff < 0 else None)
+                elif impact < 0:
+                    # Lower values are better
+                    better = 1 if diff < 0 else (2 if diff > 0 else None)
+                
+                comparison["parameter_differences"][param] = {
+                    "value1": val1,
+                    "value2": val2,
+                    "difference": diff,
+                    "difference_percent": diff_percent,
+                    "better": better  # 1 = first set is better, 2 = second set is better, None = equal
+                }
+            elif val1 is not None:
+                # Parameter exists only in first set
+                comparison["parameter_differences"][param] = {
+                    "value1": val1,
+                    "value2": None,
+                    "difference": "Only in set 1"
+                }
+            elif val2 is not None:
+                # Parameter exists only in second set
+                comparison["parameter_differences"][param] = {
+                    "value1": None,
+                    "value2": val2,
+                    "difference": "Only in set 2"
+                }
         
-        elif impact_type == 'exponential':
-            # Exponential scoring - more dramatic impact as values deviate from standard
-            exponential_factor = impact_info.get('exponential_factor', 2.0)
-            is_higher_better = impact_info.get('factor', 0) >= 0
-            
-            if is_higher_better:
-                # Higher is better
-                if value >= std_val:
-                    # Above standard
-                    normalized = min((value - std_val) / (max_val - std_val) if max_val > std_val else 0, 1)
-                    param_score = 50 + 50 * (normalized ** (1/exponential_factor))
-                else:
-                    # Below standard
-                    normalized = min((std_val - value) / (std_val - min_val) if std_val > min_val else 0, 1)
-                    param_score = 50 - 50 * (normalized ** exponential_factor)
-            else:
-                # Lower is better
-                if value <= std_val:
-                    # Below standard
-                    normalized = min((std_val - value) / (std_val - min_val) if std_val > min_val else 0, 1)
-                    param_score = 50 + 50 * (normalized ** (1/exponential_factor))
-                else:
-                    # Above standard
-                    normalized = min((value - std_val) / (max_val - std_val) if max_val > std_val else 0, 1)
-                    param_score = 50 - 50 * (normalized ** exponential_factor)
-        
+        # Determine which set is better overall
+        if score1 > score2:
+            comparison["better_set"] = 1
+            comparison["difference_summary"] = f"Set 1 is better by {score1 - score2:.1f} points (Grade {grade1} vs {grade2})."
+        elif score2 > score1:
+            comparison["better_set"] = 2
+            comparison["difference_summary"] = f"Set 2 is better by {score2 - score1:.1f} points (Grade {grade2} vs {grade1})."
         else:
-            # Default to linear scoring
-            param_score = calculate_linear_score(value, min_val, max_val, std_val, 
-                                               impact_info.get('factor', 0) >= 0)
+            comparison["better_set"] = None
+            comparison["difference_summary"] = f"Both sets have equal quality scores (Grade {grade1})."
         
-        # Ensure score is within bounds
-        param_score = max(0, min(100, param_score))
-        
-        # Store individual score for logging
-        param_scores[param] = param_score
-        
-        # Add to weighted average
-        quality_score += param_score * impact_factor
-        total_weight += impact_factor
-    
-    # Calculate final weighted score
-    final_score = 0
-    
-    if total_weight > 0:
-        # If we have calculated parameters, weight them at 70%
-        calculated_score = quality_score / total_weight
-        final_score = 0.7 * calculated_score + 0.3 * base_score
-    else:
-        # Use baseline from quality_grade if no parameters processed
-        final_score = base_score
-    
-    # Ensure final score is within range
-    final_score = max(0, min(100, final_score))
-    
-    logger.info(f"Calculated quality score: {final_score:.2f}")
-    logger.debug(f"Parameter scores: {param_scores}")
-    
-    return final_score
+        return comparison
+    except Exception as e:
+        logger.error(f"Error comparing quality parameters: {e}")
+        return None
 
-def calculate_linear_score(value, min_val, max_val, std_val, higher_better):
+
+def get_threshold_violation(commodity, quality_params):
     """
-    Helper function to calculate linear score for a parameter.
+    Check if any quality parameters exceed critical thresholds.
     
     Args:
-        value (float): Parameter value
-        min_val (float): Minimum allowed value
-        max_val (float): Maximum allowed value
-        std_val (float): Standard/reference value
-        higher_better (bool): Whether higher values are better
+        commodity (str): The commodity type
+        quality_params (dict): Quality parameters
         
     Returns:
-        float: Score from 0-100
+        dict: Violations found
     """
-    if higher_better:
-        # Higher is better
-        if value >= std_val:
-            # Above standard, scale from 50 to 100
-            range_factor = max_val - std_val
-            if range_factor <= 0:
-                return 75  # Default if range is invalid
-            else:
-                return 50 + 50 * min(value - std_val, max_val - std_val) / range_factor
-        else:
-            # Below standard, scale from 0 to 50
-            range_factor = std_val - min_val
-            if range_factor <= 0:
-                return 25  # Default if range is invalid
-            else:
-                return 50 * max(value - min_val, 0) / range_factor
-    else:
-        # Lower is better
-        if value <= std_val:
-            # Below standard, scale from 50 to 100
-            range_factor = std_val - min_val
-            if range_factor <= 0:
-                return 75  # Default if range is invalid
-            else:
-                return 50 + 50 * min(std_val - value, std_val - min_val) / range_factor
-        else:
-            # Above standard, scale from 0 to 50
-            range_factor = max_val - std_val
-            if range_factor <= 0:
-                return 25  # Default if range is invalid
-            else:
-                return 50 * max(max_val - value, 0) / range_factor
+    try:
+        if not commodity or not quality_params:
+            return {}
+        
+        # Define critical thresholds for different commodities
+        thresholds = {
+            "Rice": {
+                "moisture_content": {"max": 18, "critical": 20, "message": "High moisture content leads to spoilage"},
+                "broken_percentage": {"max": 25, "critical": 35, "message": "High broken percentage reduces quality grade"},
+                "foreign_matter": {"max": 2, "critical": 5, "message": "High foreign matter content is a food safety concern"}
+            },
+            "Wheat": {
+                "moisture_content": {"max": 15, "critical": 18, "message": "High moisture content leads to spoilage"},
+                "foreign_matter": {"max": 1.5, "critical": 3, "message": "High foreign matter content is a food safety concern"},
+                "damaged_kernels": {"max": 5, "critical": 10, "message": "High damaged kernel percentage may indicate disease"}
+            },
+            "Maize": {
+                "moisture_content": {"max": 16, "critical": 19, "message": "High moisture content leads to spoilage"},
+                "aflatoxin": {"max": 20, "critical": 30, "message": "Aflatoxin levels exceed food safety standards"},
+                "insect_damage": {"max": 5, "critical": 10, "message": "High insect damage indicates poor storage"}
+            },
+            # Generic thresholds for other commodities
+            "DEFAULT": {
+                "moisture_content": {"max": 17, "critical": 20, "message": "High moisture content leads to spoilage"},
+                "foreign_matter": {"max": 2, "critical": 5, "message": "High foreign matter content is a food safety concern"},
+                "damage": {"max": 7, "critical": 12, "message": "High damage percentage reduces quality grade"}
+            }
+        }
+        
+        # Get appropriate thresholds
+        commodity_thresholds = thresholds.get(commodity, thresholds["DEFAULT"])
+        
+        # Check for violations
+        violations = {
+            "critical": [],
+            "warning": []
+        }
+        
+        for param, value in quality_params.items():
+            if param in commodity_thresholds:
+                threshold = commodity_thresholds[param]
+                
+                # Check for critical violation
+                if "critical" in threshold and value > threshold["critical"]:
+                    violations["critical"].append({
+                        "parameter": param,
+                        "value": value,
+                        "threshold": threshold["critical"],
+                        "message": threshold.get("message", f"Critical {param} level")
+                    })
+                # Check for warning violation
+                elif "max" in threshold and value > threshold["max"]:
+                    violations["warning"].append({
+                        "parameter": param,
+                        "value": value,
+                        "threshold": threshold["max"],
+                        "message": threshold.get("message", f"High {param} level")
+                    })
+        
+        return violations
+    except Exception as e:
+        logger.error(f"Error checking threshold violations: {e}")
+        return {"critical": [], "warning": []}
+
 
 if __name__ == "__main__":
-    # Test the quality analyzer
-    print("Testing quality analyzer module...")
+    # Sample usage
+    rice_params = {
+        "moisture_content": 14.2,
+        "broken_percentage": 7.5,
+        "foreign_matter": 0.8,
+        "discoloration": 2.1,
+        "head_rice_recovery": 75.0
+    }
+    
+    result = analyze_commodity_quality("Rice", rice_params)
+    if result:
+        print(f"Quality Score: {result['quality_score']:.1f}")
+        print(f"Quality Grade: {result['quality_grade']}")
+        print(f"Analysis: {result['analysis_summary']}")

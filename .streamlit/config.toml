@@ -2,19 +2,9 @@
 headless = true
 address = "0.0.0.0"
 port = 5000
-enableCORS = false
-enableXsrfProtection = true
-maxUploadSize = 200
 
 [theme]
-primaryColor = "#1E88E5"  # Modern blue
-backgroundColor = "#FFFFFF"  # White background
-secondaryBackgroundColor = "#F5F7F9"  # Light gray
-textColor = "#262730"  # Dark text for readability
-font = "sans-serif"
-
-[logger]
-level = "info"
-
-[browser]
-gatherUsageStats = false
+primaryColor = "#1E88E5"
+backgroundColor = "#F5F7F9"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#333333"

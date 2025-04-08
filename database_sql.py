@@ -1299,6 +1299,243 @@ def get_price_recommendation(commodity, quality_params, region):
     }
 
 
+def get_price_quality_parameters(commodity):
+    """
+    Get quality parameters for a specific commodity.
+    
+    Args:
+        commodity (str): The commodity name
+        
+    Returns:
+        dict: Dictionary of quality parameters
+    """
+    if not commodity:
+        return {}
+    
+    try:
+        session = Session()
+        comm = session.query(Commodity).filter(Commodity.name == commodity).first()
+        
+        if comm and comm.quality_parameters:
+            return comm.quality_parameters
+        else:
+            logger.warning(f"No quality parameters found for commodity: {commodity}")
+            return {}
+    except Exception as e:
+        logger.error(f"Error retrieving quality parameters: {e}")
+        return {}
+    finally:
+        session.close()
+
+
+def get_regions_for_commodity(commodity):
+    """
+    Get all regions for a specific commodity.
+    
+    Args:
+        commodity (str): The commodity name
+        
+    Returns:
+        list: List of region names
+    """
+    if not commodity:
+        return []
+    
+    try:
+        session = Session()
+        comm = session.query(Commodity).filter(Commodity.name == commodity).first()
+        
+        if comm:
+            regions = session.query(Region).filter(Region.commodity_id == comm.id).all()
+            return [region.name for region in regions]
+        else:
+            logger.warning(f"Commodity not found: {commodity}")
+            return []
+    except Exception as e:
+        logger.error(f"Error retrieving regions: {e}")
+        return []
+    finally:
+        session.close()
+
+
+def get_top_commodities(limit=5):
+    """
+    Get top commodities by trading volume or importance.
+    
+    Args:
+        limit (int): Maximum number of commodities to return
+        
+    Returns:
+        list: List of commodity names
+    """
+    try:
+        session = Session()
+        
+        # This should ideally be based on a more complex query 
+        # involving trading volume or other metrics
+        # For now, just return the first few commodities
+        commodities = session.query(Commodity.name).limit(limit).all()
+        
+        return [c[0] for c in commodities]
+    except Exception as e:
+        logger.error(f"Error retrieving top commodities: {e}")
+        return []
+    finally:
+        session.close()
+
+
+def get_commodity_prices(commodity, region="National"):
+    """
+    Get current prices for a specific commodity and region.
+    
+    Args:
+        commodity (str): The commodity name
+        region (str): The region name
+        
+    Returns:
+        dict: Price information including base price, adjustments, and final price
+    """
+    if not commodity:
+        return None
+    
+    try:
+        session = Session()
+        
+        # Get the commodity
+        comm = session.query(Commodity).filter(Commodity.name == commodity).first()
+        
+        if not comm:
+            logger.warning(f"Commodity not found: {commodity}")
+            return None
+        
+        # Get the region
+        reg = session.query(Region).filter(
+            Region.commodity_id == comm.id,
+            Region.name == region
+        ).first()
+        
+        if not reg:
+            logger.warning(f"Region not found: {region} for commodity: {commodity}")
+            
+            # Try to get the first region for this commodity as fallback
+            reg = session.query(Region).filter(Region.commodity_id == comm.id).first()
+            
+            if not reg:
+                logger.warning(f"No regions found for commodity: {commodity}")
+                return None
+        
+        # Get the latest price point for this region
+        latest_price = session.query(PricePoint).filter(
+            PricePoint.commodity_id == comm.id,
+            PricePoint.region_id == reg.id
+        ).order_by(PricePoint.date.desc()).first()
+        
+        # Base values
+        base_price = reg.base_price
+        location_delta = base_price * (reg.location_factor - 1)
+        
+        # If we have a price point, use it, otherwise fall back to region base price
+        if latest_price:
+            final_price = latest_price.price
+            # Estimate quality and market deltas
+            # In reality, these would be calculated more precisely
+            quality_delta = (final_price - base_price - location_delta) * 0.6
+            market_delta = (final_price - base_price - location_delta) * 0.4
+        else:
+            final_price = base_price + location_delta
+            quality_delta = 0
+            market_delta = 0
+        
+        # Return the price structure
+        return {
+            "commodity": commodity,
+            "region": region,
+            "base_price": base_price,
+            "final_price": final_price,
+            "quality_delta": quality_delta,
+            "location_delta": location_delta,
+            "market_delta": market_delta,
+            "currency": "INR",
+            "unit": "kg", 
+            "timestamp": datetime.now(),
+            "confidence": 0.85
+        }
+    except Exception as e:
+        logger.error(f"Error retrieving commodity prices: {e}")
+        return None
+    finally:
+        session.close()
+
+
+def get_commodity_index_data(commodity, days=30):
+    """
+    Get index data for a specific commodity.
+    
+    Args:
+        commodity (str): The commodity name
+        days (int): Number of days of historical data
+        
+    Returns:
+        dict: Commodity index data
+    """
+    if not commodity:
+        return None
+    
+    try:
+        session = Session()
+        
+        # Get the commodity
+        comm = session.query(Commodity).filter(Commodity.name == commodity).first()
+        
+        if not comm:
+            logger.warning(f"Commodity not found: {commodity}")
+            return None
+        
+        # Get the end date (today)
+        end_date = datetime.now().date()
+        start_date = end_date - timedelta(days=days)
+        
+        # Get index data for the specified period
+        indices = session.query(WIZXIndex).filter(
+            WIZXIndex.commodity_id == comm.id,
+            WIZXIndex.date.between(start_date, end_date)
+        ).order_by(WIZXIndex.date).all()
+        
+        # Prepare history data
+        history = []
+        for idx in indices:
+            history.append({
+                "date": idx.date,
+                "value": idx.index_value
+            })
+        
+        # Get current index value
+        current_index = session.query(WIZXIndex).filter(
+            WIZXIndex.commodity_id == comm.id
+        ).order_by(WIZXIndex.date.desc()).first()
+        
+        if current_index:
+            current_value = current_index.index_value
+            change_percentage = current_index.change_percentage or 0
+        else:
+            # If no index data, use default values
+            current_value = 1000
+            change_percentage = 0
+        
+        # Return the index data structure
+        return {
+            "commodity": commodity,
+            "current_value": current_value,
+            "change_percentage": change_percentage,
+            "history": history
+        }
+    except Exception as e:
+        logger.error(f"Error retrieving commodity index data: {e}")
+        return None
+    finally:
+        session.close()
+
+
 def get_price_history(commodity, region, days, start_date=None):
     """
     Get historical price data for a commodity in a region.
