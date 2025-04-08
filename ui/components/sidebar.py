@@ -32,7 +32,9 @@ def render_sidebar(active_page="Dashboard"):
     pages = {
         "Dashboard": {"icon": "📊", "desc": "Market overview and trends"},
         "Price Calculator": {"icon": "🧮", "desc": "Calculate commodity prices"},
-        "Quality Analysis": {"icon": "🔍", "desc": "Analyze commodity quality"}
+        "Quality Analysis": {"icon": "🔍", "desc": "Analyze commodity quality"},
+        "Advanced Analysis": {"icon": "📈", "desc": "Advanced price analytics"},
+        "Notifications": {"icon": "🔔", "desc": "Manage price alerts"}
     }
     
     # Get all commodities

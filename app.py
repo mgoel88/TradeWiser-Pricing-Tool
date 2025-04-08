@@ -49,6 +49,11 @@ from ui.components.quality_analyzer_card import render_quality_analysis_card
 from ui.pages.dashboard import render as render_dashboard
 from ui.pages.price_calculator import render as render_price_calculator
 from ui.pages.quality_analysis import render as render_quality_analysis
+from ui.pages.advanced_analysis import render as render_advanced_analysis
+from ui.pages.notifications import render as render_notifications
+
+# Import notification service
+from notification_service import start_monitoring
 
 # Custom CSS
 def load_css():
@@ -185,9 +190,18 @@ def main():
         render_price_calculator()
     elif nav["page"] == "Quality Analysis":
         render_quality_analysis()
+    elif nav["page"] == "Advanced Analysis":
+        render_advanced_analysis()
+    elif nav["page"] == "Notifications":
+        render_notifications()
     else:
         # Default to dashboard
         render_dashboard()
+        
+    # Start notification monitoring if not already started
+    if "notification_monitor_started" not in st.session_state:
+        start_monitoring()
+        st.session_state.notification_monitor_started = True
 
 
 if __name__ == "__main__":

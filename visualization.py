@@ -10,7 +10,7 @@ import numpy as np
 from datetime import datetime, timedelta
 
 from database import get_commodity_data
-from pricing_engine import calculate_price_curve, calculate_price
+from pricing_engine import calculate_price
 from database_sql import get_price_history, get_regions, get_all_commodities
 
 # Configure logging
